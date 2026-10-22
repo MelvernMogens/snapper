@@ -1,4 +1,6 @@
 import CoreGraphics
+import ImageIO
+import UniformTypeIdentifiers
 import XCTest
 @testable import SnapKit
 
@@ -19,7 +21,29 @@ private struct Pixels {
     }
     func isRed(_ x: Int, _ y: Int) -> Bool { let p = at(x, y); return p.r > 220 && p.g < 90 && p.b < 90 }
     func isWhite(_ x: Int, _ y: Int) -> Bool { let p = at(x, y); return p.r > 245 && p.g > 245 && p.b > 245 }
+    func isBlue(_ x: Int, _ y: Int) -> Bool { let p = at(x, y); return p.b > 220 && p.r < 40 && p.g < 40 }
 }
+
+private func colorImage(_ w: Int, _ h: Int, _ c: CGColor, clearInset: Int = 0) -> CGImage {
+    let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                        space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    ctx.clear(CGRect(x: 0, y: 0, width: w, height: h))
+    ctx.setFillColor(c)
+    let i = CGFloat(clearInset)
+    ctx.fill(CGRect(x: i, y: i, width: CGFloat(w) - 2 * i, height: CGFloat(h) - 2 * i))
+    return ctx.makeImage()!
+}
+
+private func writePNG(_ img: CGImage) -> String {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("snapper-bg-\(UUID().uuidString).png")
+    let dst = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil)!
+    CGImageDestinationAddImage(dst, img, nil)
+    CGImageDestinationFinalize(dst)
+    return url.path
+}
+
+private let red = CGColor(srgbRed: 1, green: 0, blue: 0, alpha: 1)
+private let blue = CGColor(srgbRed: 0, green: 0, blue: 1, alpha: 1)
 
 private func solidImage(_ w: Int, _ h: Int, gray: CGFloat = 1) -> CGImage {
     let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
@@ -133,6 +157,103 @@ final class AnnotateRenderTests: XCTestCase {
         XCTAssertGreaterThan(box.width, 60)
         XCTAssertTrue(out.isRed(13, Int(10 + box.height / 2)), "pill background at left edge")
         XCTAssertTrue(out.isRed(250 - 9, 60 + 9) || out.isRed(250 - 10, 60), "counter disc is filled")
+    }
+}
+
+final class AnnotateBackgroundTests: XCTestCase {
+    func testImageBackgroundFillsPadding() {
+        let path = writePNG(colorImage(30, 30, blue))
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let r = AnnotationRenderer(image: colorImage(100, 50, red))
+        let doc = AnnotationDocument(background: AnnotationBackground(kind: .image(path), padding: 20, cornerRadius: 0, shadow: false))
+        let img = r.flatten(doc)!
+        XCTAssertEqual(img.width, 140); XCTAssertEqual(img.height, 90)
+        let out = Pixels(img)
+        XCTAssertTrue(out.isBlue(5, 5), "padding shows the picture: \(out.at(5, 5))")
+        XCTAssertTrue(out.isBlue(135, 85))
+        XCTAssertTrue(out.isRed(70, 45), "image in the centre")
+    }
+
+    func testTransparentSourcePixelsShowBackgroundNotBlack() {
+        let path = writePNG(colorImage(10, 10, blue))
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        // 100x50 with a 10px fully transparent margin (like a window capture's shadow area).
+        let src = colorImage(100, 50, red, clearInset: 10)
+        let r = AnnotationRenderer(image: src)
+        XCTAssertTrue(r.hasTransparentEdges)
+        XCTAssertEqual(r.opaqueBounds, CGRect(x: 10, y: 10, width: 80, height: 30))
+        for shadow in [false, true] {
+            let doc = AnnotationDocument(background: AnnotationBackground(kind: .image(path), padding: 20, cornerRadius: 0, shadow: shadow))
+            let img = r.flatten(doc)!
+            // Padding is measured from the opaque body, so the body is centred.
+            XCTAssertEqual(img.width, 80 + 40); XCTAssertEqual(img.height, 30 + 40)
+            let out = Pixels(img)
+            // Image (2,2) is transparent and lands at canvas (12,12).
+            if shadow {
+                let p = out.at(12, 12)
+                XCTAssertTrue(p.b > 120 && p.r < 40 && p.g < 40, "shadowed but still the picture, not black: \(p)")
+            } else {
+                XCTAssertTrue(out.isBlue(12, 12), "transparent source pixel shows the picture: \(out.at(12, 12))")
+            }
+            XCTAssertTrue(out.isBlue(2, 2))
+            XCTAssertTrue(out.isRed(60, 35))
+            XCTAssertTrue(out.isRed(21, 21), "body starts at the padding")
+        }
+    }
+
+    func testOpaqueImageShadowDoesNotDarkenTransparentInterior() {
+        // Shadow on, opaque image: padding near the image edge is darkened, but not black.
+        let r = AnnotationRenderer(image: colorImage(100, 50, red))
+        let doc = AnnotationDocument(background: AnnotationBackground(kind: .solid(RGBA(1, 1, 1)), padding: 40, cornerRadius: 0, shadow: true))
+        let out = Pixels(r.flatten(doc)!)
+        XCTAssertTrue(out.isWhite(2, 2), "far corner is the solid colour")
+        XCTAssertLessThan(out.at(90, 95).r, 250, "shadow below the image")
+        XCTAssertTrue(out.isRed(90, 65))
+    }
+
+    func testSolidBackground() {
+        let r = AnnotationRenderer(image: solidImage(50, 50))
+        let doc = AnnotationDocument(background: AnnotationBackground(kind: .solid(RGBA(0, 0, 1)), padding: 10, cornerRadius: 0, shadow: false))
+        let out = Pixels(r.flatten(doc)!)
+        XCTAssertTrue(out.isBlue(3, 3))
+        XCTAssertTrue(out.isWhite(35, 35))
+    }
+
+    func testMissingPictureFallsBackWithoutCrashing() {
+        let r = AnnotationRenderer(image: solidImage(50, 50))
+        let doc = AnnotationDocument(background: AnnotationBackground(kind: .image("/nonexistent/x.png"), padding: 10, shadow: false))
+        let out = Pixels(r.flatten(doc)!)
+        XCTAssertFalse(out.isWhite(3, 3))
+    }
+
+    func testAspectFillCoversAndCentres() {
+        let f = AnnotationRenderer.aspectFill(CGSize(width: 200, height: 100), in: CGRect(x: 0, y: 0, width: 100, height: 100))
+        XCTAssertEqual(f, CGRect(x: -50, y: 0, width: 200, height: 100))
+    }
+
+    func testLegacyBackgroundJSONDecodes() throws {
+        let old = #"{"annotations":[],"background":{"preset":3,"padding":30,"cornerRadius":6,"shadow":false}}"#
+        let doc = try JSONDecoder().decode(AnnotationDocument.self, from: Data(old.utf8))
+        XCTAssertEqual(doc.background, AnnotationBackground(preset: 3, padding: 30, cornerRadius: 6, shadow: false))
+        XCTAssertEqual(doc.background?.kind, .gradient(3))
+        XCTAssertEqual(doc.background?.blur, 0)
+    }
+
+    func testBackgroundKindsRoundTrip() throws {
+        for k: AnnotationBackground.Kind in [.gradient(2), .solid(RGBA(0.1, 0.2, 0.3)), .image("/tmp/a b.heic")] {
+            let b = AnnotationBackground(kind: k, padding: 12, cornerRadius: 4, shadow: false, blur: 30)
+            XCTAssertEqual(try JSONDecoder().decode(AnnotationBackground.self, from: JSONEncoder().encode(b)), b)
+        }
+    }
+
+    func testSystemWallpaperListingSkipsFolders() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("wp-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("Solid Colors.heic"), withIntermediateDirectories: true)
+        try Data().write(to: dir.appendingPathComponent("B.heic"))
+        try Data().write(to: dir.appendingPathComponent("A.heic"))
+        try Data().write(to: dir.appendingPathComponent("C.madesktop"))
+        defer { try? FileManager.default.removeItem(at: dir) }
+        XCTAssertEqual(BackgroundLibrary.systemWallpapers(in: dir).map(\.lastPathComponent), ["A.heic", "B.heic"])
     }
 }
 

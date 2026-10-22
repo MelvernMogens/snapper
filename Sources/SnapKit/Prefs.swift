@@ -32,6 +32,8 @@ public final class Prefs {
     public var showQuickAccess: Bool { get { bool("showQuickAccess", true) } set { d.set(newValue, forKey: "showQuickAccess") } }
     /// Seconds before a Quick Access card closes by itself; 0 = never.
     public var quickAccessAutoClose: Int { get { d.object(forKey: "qaAutoClose") == nil ? 0 : d.integer(forKey: "qaAutoClose") } set { d.set(newValue, forKey: "qaAutoClose") } }
+    /// Swiping a Quick Access card away deletes the capture (CleanShot just closes it).
+    public var swipeDeletes: Bool { get { bool("swipeDeletes", true) } set { d.set(newValue, forKey: "swipeDeletes") } }
     public var playSound: Bool { get { bool("playSound", true) } set { d.set(newValue, forKey: "playSound") } }
     public var windowShadow: Bool { get { bool("windowShadow", true) } set { d.set(newValue, forKey: "windowShadow") } }
     public var showMagnifier: Bool { get { bool("showMagnifier", true) } set { d.set(newValue, forKey: "showMagnifier") } }

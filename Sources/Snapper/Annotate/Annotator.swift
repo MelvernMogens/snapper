@@ -7,6 +7,10 @@ import UniformTypeIdentifiers
 enum Annotator {
     @MainActor static var editors: [AnnotateEditor] = []
 
+    /// Posted when an editor opened for a CaptureItem closes; `object` is that CaptureItem.
+    /// (Its `image` / `pointSize` already reflect the last Save or Copy.)
+    static let didClose = Notification.Name("SnapperAnnotateDidClose")
+
     static func open(url: URL) {
         MainActor.assumeIsolated {
             guard let (img, pts) = loadImage(url) else { NSSound.beep(); return }
@@ -15,14 +19,33 @@ enum Annotator {
     }
 
     static func open(item: CaptureItem) {
+        open(item: item, background: false)
+    }
+
+    /// Open the editor with the Background panel showing and the last-used background applied
+    /// (first wallpaper if none yet). For Quick Access' "Background" button.
+    static func openWithBackground(item: CaptureItem) {
+        open(item: item, background: true)
+    }
+
+    static func open(item: CaptureItem, background: Bool) {
         MainActor.assumeIsolated {
+            let e: AnnotateEditor
             if let img = item.image {
-                present(AnnotateEditor(image: img, pointSize: item.pointSize, item: item, sourceURL: item.savedURL ?? item.fileURL))
+                e = AnnotateEditor(image: img, pointSize: item.pointSize, item: item, sourceURL: item.savedURL ?? item.fileURL)
             } else if let (img, pts) = loadImage(item.fileURL) {
                 item.image = img
-                present(AnnotateEditor(image: img, pointSize: pts, item: item, sourceURL: item.savedURL ?? item.fileURL))
-            } else { NSSound.beep() }
+                e = AnnotateEditor(image: img, pointSize: pts, item: item, sourceURL: item.savedURL ?? item.fileURL)
+            } else { NSSound.beep(); return }
+            present(e)
+            if background { e.showBackground(BackgroundStore.defaultForWindowShots) }
         }
+    }
+
+    /// Open a file with the Background panel showing.
+    static func openWithBackground(url: URL) {
+        open(url: url)
+        MainActor.assumeIsolated { editors.last?.showBackground(BackgroundStore.defaultForWindowShots) }
     }
 
     @MainActor private static func present(_ e: AnnotateEditor) {
@@ -73,11 +96,34 @@ enum Annotator {
             print("\(out.width)x\(out.height) annotations=\(doc.annotations.count)")
             return 0
         }
+        CLI.extra["--background-demo"] = { args in
+            guard args.count >= 2 else {
+                FileHandle.standardError.write("usage: --background-demo IN.png OUT.png [picture] [padding] [noshadow]\n".data(using: .utf8)!); return 2
+            }
+            guard let (img, pts) = loadImage(URL(fileURLWithPath: args[0])) else {
+                FileHandle.standardError.write("cannot read \(args[0])\n".data(using: .utf8)!); return 1
+            }
+            guard let pic = args.count > 2 ? args[2] : BackgroundStore.wallpapers.first?.path else {
+                FileHandle.standardError.write("no wallpaper found\n".data(using: .utf8)!); return 1
+            }
+            let pad = args.count > 3 ? CGFloat(Double(args[3]) ?? 64) : 64
+            let r = AnnotationRenderer(image: img, pointSize: pts)
+            let shadow = !(args.count > 4 && args[4] == "noshadow")
+            let doc = AnnotationDocument(background: AnnotationBackground(kind: .image(pic), padding: pad, shadow: shadow))
+            guard let out = r.flatten(doc), let data = encode(out, format: .png, scale: r.scale) else { return 1 }
+            do { try data.write(to: URL(fileURLWithPath: args[1])) } catch { return 1 }
+            print("\(out.width)x\(out.height) background=\(pic) ownShadow=\(r.hasTransparentEdges)")
+            return 0
+        }
         CLI.extra["--annotate-open"] = { args in
             guard let path = args.first else { return 2 }
             NSApp.activate(ignoringOtherApps: true)
-            open(url: URL(fileURLWithPath: path))
-            if args.count > 1, args[1] == "--demo", let e = Annotator.editors.last {
+            if args.dropFirst().contains("--background") {
+                openWithBackground(url: URL(fileURLWithPath: path))
+            } else {
+                open(url: URL(fileURLWithPath: path))
+            }
+            if args.dropFirst().contains("--demo"), let e = Annotator.editors.last {
                 e.loadDemo()
             }
             // Keep the process alive as a normal app until killed.

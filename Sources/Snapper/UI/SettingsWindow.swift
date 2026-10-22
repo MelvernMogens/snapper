@@ -79,6 +79,7 @@ final class SettingsModel: ObservableObject {
         }
     }
     @Published var organizeFolders: Bool { didSet { p.organizeFolders = organizeFolders } }
+    @Published var swipeDeletes: Bool { didSet { p.swipeDeletes = swipeDeletes } }
     @Published var launchAtLogin: Bool = false
     @Published var loginError: String?
     @Published var bindings: [BindingRow] = []
@@ -107,6 +108,7 @@ final class SettingsModel: ObservableObject {
         recordAudioMic = p.recordAudioMic
         replaceSystemShortcuts = p.useCommandShiftKeys
         organizeFolders = p.organizeFolders
+        swipeDeletes = p.swipeDeletes
         launchAtLogin = SMAppService.mainApp.status == .enabled
         refreshBindings()
     }
@@ -248,6 +250,11 @@ struct SettingsView: View {
                 Toggle("Save automatically", isOn: $model.autoSave)
                 Toggle("Copy to clipboard", isOn: $model.autoCopy)
                 Toggle("Show Quick Access overlay", isOn: $model.showQuickAccess)
+                Toggle(isOn: $model.swipeDeletes) {
+                    Text("Swiping the overlay away deletes the capture")
+                    Text("The file goes to the Trash and leaves History")
+                }
+                .disabled(!model.showQuickAccess)
                 Picker("Close overlay after", selection: $model.quickAccessAutoClose) {
                     Text("Never").tag(0)
                     ForEach([5, 10, 20, 30, 60], id: \.self) { Text("\($0) seconds").tag($0) }

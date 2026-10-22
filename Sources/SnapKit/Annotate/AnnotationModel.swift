@@ -155,14 +155,69 @@ public struct Annotation: Codable, Equatable, Identifiable {
     }
 }
 
-/// Gradient backdrop placed behind the screenshot (CleanShot "Background").
+/// Backdrop placed behind the screenshot (CleanShot "Background"): a gradient preset, a solid
+/// colour, or any picture (built-in wallpaper / user-chosen file), drawn aspect-fill.
 public struct AnnotationBackground: Codable, Equatable {
-    public var preset: Int
+    public enum Kind: Codable, Equatable, Hashable {
+        case gradient(Int)
+        case solid(RGBA)
+        /// Absolute file path of a picture.
+        case image(String)
+    }
+
+    public var kind: Kind
     public var padding: CGFloat
     public var cornerRadius: CGFloat
     public var shadow: Bool
+    /// Blur strength for picture backgrounds, 0 (sharp) … 100.
+    public var blur: CGFloat
+
     public init(preset: Int = 0, padding: CGFloat = 48, cornerRadius: CGFloat = 10, shadow: Bool = true) {
-        self.preset = preset; self.padding = padding; self.cornerRadius = cornerRadius; self.shadow = shadow
+        self.init(kind: .gradient(preset), padding: padding, cornerRadius: cornerRadius, shadow: shadow)
+    }
+
+    public init(kind: Kind, padding: CGFloat = 48, cornerRadius: CGFloat = 10, shadow: Bool = true, blur: CGFloat = 0) {
+        self.kind = kind; self.padding = padding; self.cornerRadius = cornerRadius; self.shadow = shadow; self.blur = blur
+    }
+
+    /// Gradient preset index (nil-safe accessor kept for older call sites). Setting it switches to a gradient.
+    public var preset: Int? {
+        get { if case .gradient(let i) = kind { return i }; return nil }
+        set { if let newValue { kind = .gradient(newValue) } }
+    }
+
+    public var imagePath: String? { if case .image(let p) = kind { return p }; return nil }
+
+    // Flat JSON: {kind:"gradient|solid|image", preset, color, imagePath, padding, cornerRadius, shadow, blur}.
+    // Old documents only carry {preset, padding, cornerRadius, shadow} and decode as gradients.
+    private enum CodingKeys: String, CodingKey { case kind, preset, color, imagePath, padding, cornerRadius, shadow, blur }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        padding = try c.decodeIfPresent(CGFloat.self, forKey: .padding) ?? 48
+        cornerRadius = try c.decodeIfPresent(CGFloat.self, forKey: .cornerRadius) ?? 10
+        shadow = try c.decodeIfPresent(Bool.self, forKey: .shadow) ?? true
+        blur = try c.decodeIfPresent(CGFloat.self, forKey: .blur) ?? 0
+        let preset = try c.decodeIfPresent(Int.self, forKey: .preset) ?? 0
+        switch try c.decodeIfPresent(String.self, forKey: .kind) ?? "gradient" {
+        case "solid": kind = .solid(try c.decodeIfPresent(RGBA.self, forKey: .color) ?? .white)
+        case "image":
+            if let p = try c.decodeIfPresent(String.self, forKey: .imagePath) { kind = .image(p) } else { kind = .gradient(preset) }
+        default: kind = .gradient(preset)
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(padding, forKey: .padding)
+        try c.encode(cornerRadius, forKey: .cornerRadius)
+        try c.encode(shadow, forKey: .shadow)
+        try c.encode(blur, forKey: .blur)
+        switch kind {
+        case .gradient(let i): try c.encode("gradient", forKey: .kind); try c.encode(i, forKey: .preset)
+        case .solid(let col): try c.encode("solid", forKey: .kind); try c.encode(col, forKey: .color)
+        case .image(let p): try c.encode("image", forKey: .kind); try c.encode(p, forKey: .imagePath)
+        }
     }
 
     /// Two-stop diagonal gradients.

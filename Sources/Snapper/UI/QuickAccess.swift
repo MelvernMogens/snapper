@@ -24,6 +24,7 @@ final class QuickAccess {
             let old = cards.removeLast()
             old.slideOut(velocity: 0)
         }
+        observeEditor()
         layout(newCard: card)
         card.scheduleAutoClose()
     }
@@ -34,6 +35,16 @@ final class QuickAccess {
         cards.removeAll { $0 === card }
         card.slideOut(velocity: velocity)
         layout(newCard: nil)
+    }
+
+    private var editorObserver: Any?
+    /// Annotate posts "SnapperAnnotateDidClose" with the CaptureItem when its window closes.
+    func observeEditor() {
+        guard editorObserver == nil else { return }
+        editorObserver = NotificationCenter.default.addObserver(forName: Notification.Name("SnapperAnnotateDidClose"), object: nil, queue: .main) { [weak self] n in
+            guard let item = n.object as? CaptureItem else { return }
+            MainActor.assumeIsolated { self?.cards.first { $0.item === item }?.editorClosed() }
+        }
     }
 
     func dismissAll() { for c in cards { c.close(animated: false) }; cards.removeAll() }
@@ -50,21 +61,16 @@ final class QuickAccess {
             let size = c.restFrame.size
             let target = CGRect(x: vf.minX + margin, y: y, width: size.width, height: size.height)
             c.restFrame = target
+            let wf = c.windowFrame(for: target)
             if c === newCard {
-                c.setFrame(target.offsetBy(dx: -(size.width + margin), dy: 0), display: false)
-                c.alphaValue = 0
+                c.setFrame(wf, display: false)
                 c.orderFrontRegardless()
-                NSAnimationContext.runAnimationGroup { ctx in
-                    ctx.duration = 0.28
-                    ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.25, 1)
-                    c.animator().setFrame(target, display: true)
-                    c.animator().alphaValue = 1
-                }
+                c.slideIn()
             } else if !c.isInteracting {
                 NSAnimationContext.runAnimationGroup { ctx in
                     ctx.duration = 0.25
                     ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.25, 1)
-                    c.animator().setFrame(target, display: true)
+                    c.animator().setFrame(wf, display: true)
                 }
             }
             y += size.height + gap
@@ -158,11 +164,43 @@ final class QuickAccessCard: NSPanel {
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
         hidesOnDeactivate = false
         animationBehavior = .none
-        contentView = QuickAccessView(card: self, image: img, frame: CGRect(origin: .zero, size: size))
+        let container = NSView(frame: CGRect(x: 0, y: 0, width: size.width + lead, height: size.height))
+        container.wantsLayer = true
+        let v = QuickAccessView(card: self, image: img, frame: CGRect(x: lead, y: 0, width: size.width, height: size.height))
+        container.addSubview(v)
+        cardViewRef = v
+        contentView = container
+        setContentSize(container.frame.size)
+    }
+
+    /// The window spans from the screen edge to the card's right side, so the card can slide out to the real edge
+    /// while the WINDOW stays still (moving a window toward the edge triggers macOS's half-screen tiling preview).
+    let lead: CGFloat = 16
+    private var cardViewRef: QuickAccessView!
+    func windowFrame(for card: CGRect) -> CGRect {
+        CGRect(x: card.minX - lead, y: card.minY, width: card.width + lead, height: card.height)
+    }
+    private var slideLayer: CALayer? { cardViewRef.layer }
+
+    func slideIn() {
+        guard let layer = slideLayer else { return }
+        let from = -(restFrame.width + lead)
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(0.28)
+        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.25, 1))
+        let move = CABasicAnimation(keyPath: "transform.translation.x")
+        move.fromValue = from
+        move.toValue = 0
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 0
+        fade.toValue = 1
+        layer.add(move, forKey: "in")
+        layer.add(fade, forKey: "inFade")
+        CATransaction.commit()
     }
 
     override var canBecomeKey: Bool { true }
-    private var cardView: QuickAccessView? { contentView as? QuickAccessView }
+    private var cardView: QuickAccessView? { cardViewRef }
 
     // MARK: lifecycle
 
@@ -172,7 +210,7 @@ final class QuickAccessCard: NSPanel {
         guard secs > 0, !demoHover else { return }
         let gen = autoCloseGeneration
         DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(secs)) { [weak self] in
-            guard let self, gen == self.autoCloseGeneration, !self.isHovered, !self.isInteracting else { return }
+            guard let self, gen == self.autoCloseGeneration, !self.isHovered, !self.isInteracting, !self.isEditing else { return }
             self.owner.dismiss(self)
         }
     }
@@ -186,49 +224,85 @@ final class QuickAccessCard: NSPanel {
         slideOut(velocity: 0)
     }
 
-    /// Slides the card off the left edge of the screen and fades it out. `velocity` (pt/s, negative = leftward) speeds it up.
+    /// Slides the card's CONTENT off to the left and fades it out. The window itself never moves: moving a window
+    /// toward the screen edge makes macOS show its half-screen tiling preview.
     func slideOut(velocity: CGFloat) {
         isDismissing = true
         isInteracting = false
         cancelAutoClose()
-        let targetX = min(frame.minX - frame.width * 0.6, owner.stackEdgeX - frame.width - 24)
-        let distance = abs(frame.minX - targetX)
+        guard let layer = slideLayer else { orderOut(nil); return }
+        let fromX = layer.affineTransform().tx
+        let toX = -(restFrame.maxX - owner.stackEdgeX) - 10
         let speed = max(abs(min(velocity, 0)), 1100)
-        let duration = min(max(Double(distance / speed), 0.14), 0.3)
-        var target = frame
-        target.origin.x = targetX
-        NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = duration
-            ctx.timingFunction = CAMediaTimingFunction(name: velocity < -300 ? .linear : .easeIn)
-            animator().setFrame(target, display: true)
-            animator().alphaValue = 0
-        }, completionHandler: { self.orderOut(nil) })
+        let duration = min(max(Double(abs(toX - fromX) / speed), 0.14), 0.3)
+        hasShadow = false
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(duration)
+        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: velocity < -300 ? .linear : .easeIn))
+        CATransaction.setCompletionBlock { [weak self] in
+            self?.orderOut(nil)
+            self?.slideLayer?.setAffineTransform(.identity)
+            self?.slideLayer?.opacity = 1
+        }
+        let move = CABasicAnimation(keyPath: "transform.translation.x")
+        move.fromValue = fromX
+        move.toValue = toX
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = layer.opacity
+        fade.toValue = 0
+        layer.add(move, forKey: "slide")
+        layer.add(fade, forKey: "fade")
+        layer.setAffineTransform(CGAffineTransform(translationX: toX, y: 0))
+        layer.opacity = 0
+        CATransaction.commit()
     }
 
-    // MARK: swipe support (offset relative to restFrame.minX)
+    // MARK: swipe support (offset relative to the resting position; only the content layer moves)
 
     func applySwipe(offset: CGFloat) {
+        guard let layer = slideLayer else { return }
         let shown = QuickAccess.rubberBand(offset, width: restFrame.width)
-        var f = restFrame
-        f.origin.x += shown
-        setFrame(f, display: true)
-        alphaValue = shown < 0 ? max(0.25, 1 - (-shown / restFrame.width) * 0.75) : 1
+        if hasShadow { hasShadow = false }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.setAffineTransform(CGAffineTransform(translationX: shown, y: 0))
+        layer.opacity = Float(shown < 0 ? max(0.25, 1 - (-shown / restFrame.width) * 0.75) : 1)
+        CATransaction.commit()
     }
 
     func endSwipe(offset: CGFloat, velocity: CGFloat) {
         switch QuickAccess.swipeDecision(offset: offset, velocity: velocity, width: restFrame.width) {
         case .dismiss:
+            // Swiping a card away throws the capture out (file to Trash + gone from History), unless turned off in Settings.
+            if Prefs.shared.swipeDeletes { discardFiles() }
             owner.dismiss(self, velocity: min(velocity, -1100))
         case .snapBack:
             isInteracting = false
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.32
-                ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.25, 1.35, 0.4, 1)   // slight overshoot
-                animator().setFrame(restFrame, display: true)
-                animator().alphaValue = 1
-            }
+            guard let layer = slideLayer else { return }
+            let fromX = layer.affineTransform().tx
+            CATransaction.begin()
+            CATransaction.setAnimationDuration(0.32)
+            CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(controlPoints: 0.25, 1.35, 0.4, 1))  // slight overshoot
+            CATransaction.setCompletionBlock { [weak self] in self?.hasShadow = true }
+            let move = CABasicAnimation(keyPath: "transform.translation.x")
+            move.fromValue = fromX
+            move.toValue = 0
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = layer.opacity
+            fade.toValue = 1
+            layer.add(move, forKey: "snap")
+            layer.add(fade, forKey: "snapFade")
+            layer.setAffineTransform(.identity)
+            layer.opacity = 1
+            CATransaction.commit()
             if !isHovered { scheduleAutoClose() }
         }
+    }
+
+    /// Saved file → Trash (recoverable), private history copy removed.
+    func discardFiles() {
+        if let s = item.savedURL { try? FileManager.default.trashItem(at: s, resultingItemURL: nil) }
+        if let id = item.historyID { HistoryStore.shared.remove(id: id) }
     }
 
     // MARK: actions
@@ -254,10 +328,27 @@ final class QuickAccessCard: NSPanel {
         }
     }
 
+    /// CleanShot behaviour: the card stays while the editor is open and shows the edited image after it closes.
     func annotate() {
-        guard item.kind == .screenshot else { NSWorkspace.shared.open(item.savedURL ?? item.fileURL); owner.dismiss(self); return }
+        guard item.kind == .screenshot else { NSWorkspace.shared.open(item.savedURL ?? item.fileURL); return }
+        cancelAutoClose()
+        isEditing = true
         Annotator.open(item: item)
-        owner.dismiss(self)
+    }
+
+    /// Open Annotate with the Background panel ready (CleanShot "Background" flow).
+    func annotateWithBackground() {
+        guard item.kind == .screenshot else { return }
+        cancelAutoClose()
+        isEditing = true
+        Annotator.openWithBackground(item: item)
+    }
+
+    var isEditing = false
+    func editorClosed() {
+        isEditing = false
+        cardView?.refreshImage()
+        if !isHovered { scheduleAutoClose() }
     }
 
     func pin() {
@@ -267,8 +358,7 @@ final class QuickAccessCard: NSPanel {
     }
 
     func delete() {
-        if let s = item.savedURL { try? FileManager.default.trashItem(at: s, resultingItemURL: nil) }
-        if let id = item.historyID { HistoryStore.shared.remove(id: id) }
+        discardFiles()
         owner.dismiss(self)
     }
 }
@@ -360,7 +450,8 @@ private final class QAHoverOverlay: NSView {
 
 final class QuickAccessView: NSView, NSDraggingSource {
     unowned let card: QuickAccessCard
-    let image: NSImage?
+    private(set) var image: NSImage?
+    private var thumbView: NSImageView?
     private let overlay = QAHoverOverlay()
     private let centerStack = NSStackView()
     private var badge: NSView?
@@ -388,6 +479,7 @@ final class QuickAccessView: NSView, NSDraggingSource {
         layer?.backgroundColor = NSColor(white: 0.13, alpha: 1).cgColor
 
         let iv = NSImageView(frame: bounds)
+        thumbView = iv
         iv.image = image
         iv.imageScaling = .scaleProportionallyUpOrDown
         iv.animates = card.item.kind == .gif
@@ -430,18 +522,19 @@ final class QuickAccessView: NSView, NSDraggingSource {
         ])
 
         let inset: CGFloat = 6
-        func corner(_ b: QAButton, top: Bool, left: Bool) {
+        func corner(_ b: QAButton, top: Bool, left: Bool, offset: CGFloat = 0) {
             overlay.addSubview(b)
             NSLayoutConstraint.activate([
                 top ? b.topAnchor.constraint(equalTo: overlay.topAnchor, constant: inset)
                     : b.bottomAnchor.constraint(equalTo: overlay.bottomAnchor, constant: -inset),
-                left ? b.leadingAnchor.constraint(equalTo: overlay.leadingAnchor, constant: inset)
-                     : b.trailingAnchor.constraint(equalTo: overlay.trailingAnchor, constant: -inset),
+                left ? b.leadingAnchor.constraint(equalTo: overlay.leadingAnchor, constant: inset + offset)
+                     : b.trailingAnchor.constraint(equalTo: overlay.trailingAnchor, constant: -(inset + offset)),
             ])
         }
         corner(QAButton(.round("xmark"), tip: "Close") { [unowned self] in self.card.owner.dismiss(self.card) }, top: true, left: true)
         if isShot {
             corner(QAButton(.round("pin.fill"), tip: "Pin to screen") { [unowned self] in self.card.pin() }, top: true, left: false)
+            corner(QAButton(.round("photo.artframe"), tip: "Annotate with background") { [unowned self] in self.card.annotateWithBackground() }, top: true, left: true, offset: 28)
             corner(QAButton(.round("pencil"), tip: "Annotate") { [unowned self] in self.card.annotate() }, top: false, left: true)
         } else {
             corner(QAButton(.round("play.fill"), tip: "Open") { [unowned self] in self.card.annotate() }, top: false, left: true)
@@ -464,6 +557,13 @@ final class QuickAccessView: NSView, NSDraggingSource {
     }
 
     // MARK: hover
+
+    /// Show the edited image after Annotate saved/copied.
+    func refreshImage() {
+        guard let img = card.item.nsImage else { return }
+        image = img
+        thumbView?.image = img
+    }
 
     func setHover(_ on: Bool, animated: Bool = true) {
         let on = on || card.hoverLocked

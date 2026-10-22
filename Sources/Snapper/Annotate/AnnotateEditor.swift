@@ -92,7 +92,9 @@ final class AnnotateEditor: NSObject, NSWindowDelegate {
         win.collectionBehavior = [.fullScreenPrimary]
         window = win
 
-        let root = NSView()
+        let root = DropRootView()
+        root.acceptsDrops = { [weak self] in self?.showBackgroundPanel == true && self?.tool != .crop }
+        root.onDropImage = { [weak self] url in self?.useBackgroundPicture(url) ?? false }
         win.contentView = root
 
         let top = DragBar()
@@ -138,6 +140,7 @@ final class AnnotateEditor: NSObject, NSWindowDelegate {
         canvas.endTextEditing()
         NotificationCenter.default.removeObserver(self)
         Annotator.closed(self)
+        if let item { NotificationCenter.default.post(name: Annotator.didClose, object: item) }
     }
 
     func windowDidResize(_ notification: Notification) { updateZoomLabel() }
@@ -256,26 +259,7 @@ final class AnnotateEditor: NSObject, NSWindowDelegate {
             return
         }
         if showBackgroundPanel {
-            let bg = doc.background
-            for i in 0..<AnnotationBackground.presets.count {
-                let c = GradientChip(i)
-                c.isOn = bg?.preset == i
-                c.onClick = { [weak self] in self?.setBackground { $0.preset = i } }
-                s.addArrangedSubview(c)
-            }
-            s.addArrangedSubview(gap(10)); s.addArrangedSubview(caption("Padding")); s.addArrangedSubview(gap(4))
-            s.addArrangedSubview(slider(value: bg?.padding ?? 48, max: 160, action: #selector(paddingSlid(_:))))
-            s.addArrangedSubview(gap(10)); s.addArrangedSubview(caption("Corners")); s.addArrangedSubview(gap(4))
-            s.addArrangedSubview(slider(value: bg?.cornerRadius ?? 10, max: 32, action: #selector(radiusSlid(_:))))
-            s.addArrangedSubview(gap(8))
-            let shadow = IconButton(symbol: "shadow", tip: "Shadow") { [weak self] in self?.setBackground { $0.shadow.toggle() } }
-            shadow.isOn = bg?.shadow ?? true
-            s.addArrangedSubview(shadow)
-            s.addArrangedSubview(gap(8))
-            s.addArrangedSubview(smallTextButton(bg == nil ? "Add" : "Remove") { [weak self] in
-                guard let self else { return }
-                if self.doc.background == nil { self.setBackground { _ in } } else { self.commit { $0.background = nil }; self.rebuildProps() }
-            })
+            buildBackgroundProps(into: s)
             return
         }
 
@@ -378,14 +362,89 @@ final class AnnotateEditor: NSObject, NSWindowDelegate {
         }
     }
 
-    private func slider(value: CGFloat, max: CGFloat, action: Selector) -> NSSlider {
+    private func slider(value: CGFloat, max: CGFloat, width: CGFloat = 96, tip: String? = nil, action: Selector) -> NSSlider {
         let sl = NSSlider(value: Double(value), minValue: 0, maxValue: Double(max), target: self, action: action)
-        sl.controlSize = .small
+        sl.controlSize = .mini
         sl.isContinuous = true
         sl.refusesFirstResponder = true
+        sl.toolTip = tip
         sl.translatesAutoresizingMaskIntoConstraints = false
-        sl.widthAnchor.constraint(equalToConstant: 96).isActive = true
+        sl.widthAnchor.constraint(equalToConstant: width).isActive = true
         return sl
+    }
+
+    /// Background row: [none] [gradients] [colour] | [pictures… scroll] [+] | padding · corners · (blur) · shadow
+    private func buildBackgroundProps(into s: NSStackView) {
+        let bg = doc.background
+        let none = NoneChip()
+        none.isOn = bg == nil
+        none.onClick = { [weak self] in
+            guard let self, self.doc.background != nil else { return }
+            self.commit { $0.background = nil }
+            self.rebuildProps(); self.refreshChrome()
+        }
+        s.addArrangedSubview(none)
+        for i in 0..<AnnotationBackground.presets.count {
+            let c = GradientChip(i)
+            c.isOn = bg?.preset == i
+            c.onClick = { [weak self] in self?.setBackground { $0.kind = .gradient(i) } }
+            s.addArrangedSubview(c)
+        }
+        let well = NSColorWell(style: .minimal)
+        if case .solid(let c)? = bg?.kind { well.color = c.ns } else { well.color = .white }
+        well.target = self; well.action = #selector(bgWellChanged(_:))
+        well.toolTip = "Solid colour"
+        well.translatesAutoresizingMaskIntoConstraints = false
+        well.widthAnchor.constraint(equalToConstant: 20).isActive = true
+        well.heightAnchor.constraint(equalToConstant: 14).isActive = true
+        if case .solid? = bg?.kind {
+            well.wantsLayer = true
+            well.layer?.borderColor = NSColor.white.cgColor; well.layer?.borderWidth = 1.5; well.layer?.cornerRadius = 4
+        }
+        s.addArrangedSubview(gap(3)); s.addArrangedSubview(well)
+        s.addArrangedSubview(gap(7)); s.addArrangedSubview(Chrome.separator()); s.addArrangedSubview(gap(5))
+
+        // Pictures: current desktop, recent picks, built-in wallpapers (deduped, in that order).
+        var urls: [(URL, String?)] = []
+        var seen = Set<String>()
+        func add(_ u: URL, _ tip: String?) { if seen.insert(u.standardizedFileURL.path).inserted { urls.append((u, tip)) } }
+        if let d = BackgroundStore.currentDesktopPicture { add(d, "Current desktop picture") }
+        // A picture in use that isn't otherwise listed (e.g. dropped from Finder before import).
+        for u in BackgroundStore.recents { add(u, u.lastPathComponent) }
+        for u in BackgroundStore.wallpapers { add(u, nil) }
+        if let p = bg?.imagePath, !seen.contains(URL(fileURLWithPath: p).standardizedFileURL.path) {
+            urls.insert((URL(fileURLWithPath: p), URL(fileURLWithPath: p).lastPathComponent), at: 0)
+        }
+        var chips: [ImageChip] = []
+        var selectedChip: ImageChip?
+        for (u, tip) in urls {
+            let c = ImageChip(u, tip: tip)
+            c.isOn = bg?.imagePath.map { URL(fileURLWithPath: $0).standardizedFileURL == u.standardizedFileURL } ?? false
+            if c.isOn { selectedChip = c }
+            c.onClick = { [weak self] in self?.setBackground { $0.kind = .image(u.path) } }
+            chips.append(c)
+        }
+        let strip = ChipStrip(chips)
+        s.addArrangedSubview(strip)
+        let plus = IconButton(symbol: "plus", tip: "Choose Picture… (or drop an image here)", size: 11, width: 24) { [weak self] in
+            self?.chooseBackgroundPicture()
+        }
+        s.addArrangedSubview(plus)
+        if let sel = selectedChip { DispatchQueue.main.async { strip.scrollToShow(sel) } }
+
+        s.addArrangedSubview(gap(5)); s.addArrangedSubview(Chrome.separator()); s.addArrangedSubview(gap(8))
+        s.addArrangedSubview(caption("Padding")); s.addArrangedSubview(gap(3))
+        s.addArrangedSubview(slider(value: bg?.padding ?? 48, max: 200, width: 64, tip: "Padding", action: #selector(paddingSlid(_:))))
+        s.addArrangedSubview(gap(8)); s.addArrangedSubview(caption("Corners")); s.addArrangedSubview(gap(3))
+        s.addArrangedSubview(slider(value: bg?.cornerRadius ?? 10, max: 32, width: 56, tip: "Corner radius", action: #selector(radiusSlid(_:))))
+        if bg?.imagePath != nil {
+            s.addArrangedSubview(gap(8)); s.addArrangedSubview(caption("Blur")); s.addArrangedSubview(gap(3))
+            s.addArrangedSubview(slider(value: bg?.blur ?? 0, max: 100, width: 52, tip: "Blur the picture", action: #selector(blurSlid(_:))))
+        }
+        s.addArrangedSubview(gap(6))
+        let shadow = IconButton(symbol: "shadow", tip: "Shadow") { [weak self] in self?.setBackground { $0.shadow.toggle() } }
+        shadow.isOn = bg?.shadow ?? true
+        s.addArrangedSubview(shadow)
     }
 
     // MARK: state
@@ -533,15 +592,74 @@ final class AnnotateEditor: NSObject, NSWindowDelegate {
         canvas.endTextEditing()
         if tool == .crop { cancelCrop() }
         showBackgroundPanel.toggle()
-        if showBackgroundPanel && doc.background == nil { commit { $0.background = AnnotationBackground() } }
+        if showBackgroundPanel && doc.background == nil {
+            commit { $0.background = BackgroundStore.lastUsed ?? AnnotationBackground() }
+        }
         if showBackgroundPanel { selectedID = nil }
+        rebuildProps(); refreshChrome()
+        zoomToFit()
+    }
+
+    /// Open the Background panel with `bg` applied (Quick Access "Background", `--background`).
+    func showBackground(_ bg: AnnotationBackground) {
+        canvas.endTextEditing()
+        if tool == .crop { cancelCrop() }
+        if doc.background == nil { commit { $0.background = bg } }
+        showBackgroundPanel = true
+        selectedID = nil
         rebuildProps(); refreshChrome()
         zoomToFit()
     }
 
     private func setBackground(_ f: (inout AnnotationBackground) -> Void) {
         commit { var b = $0.background ?? AnnotationBackground(); f(&b); $0.background = b }
+        BackgroundStore.lastUsed = doc.background
         rebuildProps(); refreshChrome()
+    }
+
+    @objc private func bgWellChanged(_ w: NSColorWell) {
+        let c = RGBA(w.color)
+        slide { $0.kind = .solid(c) }
+        // Don't rebuild the row (that would detach the live colour panel from this well) — just
+        // clear the other chips' selection and fold the burst of changes into one undo step.
+        for v in propsStack.arrangedSubviews {
+            (v as? GradientChip)?.isOn = false
+            (v as? NoneChip)?.isOn = false
+            (v as? ChipStrip)?.stack.arrangedSubviews.forEach { ($0 as? ImageChip)?.isOn = false }
+        }
+        w.wantsLayer = true
+        w.layer?.borderColor = NSColor.white.cgColor; w.layer?.borderWidth = 1.5; w.layer?.cornerRadius = 4
+        guard !wellCommitPending else { return }
+        wellCommitPending = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            guard let self else { return }
+            self.wellCommitPending = false
+            if let before = self.sliderBefore { self.sliderBefore = nil; self.finishLive(before: before) }
+            BackgroundStore.lastUsed = self.doc.background
+        }
+    }
+    private var wellCommitPending = false
+
+    private func chooseBackgroundPicture() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.message = "Choose a background picture"
+        panel.prompt = "Use Picture"
+        panel.beginSheetModal(for: window) { [weak self] r in
+            guard r == .OK, let u = panel.url else { return }
+            _ = self?.useBackgroundPicture(u)
+        }
+    }
+
+    /// Import (copy into Application Support) and apply a picture as the background.
+    @discardableResult
+    func useBackgroundPicture(_ url: URL) -> Bool {
+        guard let local = BackgroundStore.importPicture(url) else { NSSound.beep(); return false }
+        if !showBackgroundPanel { showBackground(BackgroundStore.lastUsed ?? AnnotationBackground()) }
+        setBackground { $0.kind = .image(local.path) }
+        return true
     }
 
     private func slide(_ f: (inout AnnotationBackground) -> Void) {
@@ -553,10 +671,12 @@ final class AnnotateEditor: NSObject, NSWindowDelegate {
         if NSApp.currentEvent?.type == .leftMouseUp, let before = sliderBefore {
             sliderBefore = nil
             finishLive(before: before)
+            BackgroundStore.lastUsed = doc.background
         }
     }
     @objc private func paddingSlid(_ s: NSSlider) { slide { $0.padding = CGFloat(s.doubleValue).rounded() } }
     @objc private func radiusSlid(_ s: NSSlider) { slide { $0.cornerRadius = CGFloat(s.doubleValue).rounded() } }
+    @objc private func blurSlid(_ s: NSSlider) { slide { $0.blur = CGFloat(s.doubleValue).rounded() } }
 
     // MARK: crop
 
@@ -699,6 +819,10 @@ final class AnnotateEditor: NSObject, NSWindowDelegate {
     func copyAndClose() {
         guard let img = flattened() else { NSSound.beep(); return }
         Output.copyToClipboard(img, pointSize: outputPointSize)
+        if let item {
+            item.image = img
+            item.pointSize = outputPointSize
+        }
         window.close()
     }
 

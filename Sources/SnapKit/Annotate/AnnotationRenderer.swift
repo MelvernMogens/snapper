@@ -65,10 +65,21 @@ public final class AnnotationRenderer {
         return c
     }
 
+    /// A window capture (transparent margin + its own shadow) placed on a background: the padding is
+    /// measured from the opaque window body, and the whole image (shadow included) is drawn unclipped.
+    public func usesOwnShadow(_ doc: AnnotationDocument) -> Bool {
+        doc.background != nil && doc.crop == nil && hasTransparentEdges
+    }
+
+    /// The rect that padding is laid out around (image points).
+    public func layoutRect(_ doc: AnnotationDocument) -> CGRect {
+        usesOwnShadow(doc) ? opaqueBounds : cropRect(doc)
+    }
+
     /// Output size in points.
     public func canvasSize(_ doc: AnnotationDocument, cropping: Bool = false) -> CGSize {
         if cropping { return pointSize }
-        let c = cropRect(doc)
+        let c = layoutRect(doc)
         let p = doc.background?.padding ?? 0
         return CGSize(width: c.width + 2 * p, height: c.height + 2 * p)
     }
@@ -76,9 +87,40 @@ public final class AnnotationRenderer {
     /// Where image-space (0,0) lands in canvas space.
     public func imageOrigin(_ doc: AnnotationDocument, cropping: Bool = false) -> CGPoint {
         if cropping { return .zero }
-        let c = cropRect(doc)
+        let c = layoutRect(doc)
         let p = doc.background?.padding ?? 0
         return CGPoint(x: p - c.minX, y: p - c.minY)
+    }
+
+    /// Bounds of the (nearly) opaque pixels in image points — the window body of a window capture.
+    public private(set) lazy var opaqueBounds: CGRect = Self.alphaBounds(image, threshold: 250).map {
+        let k = 1 / scale
+        return CGRect(x: $0.minX * k, y: $0.minY * k, width: $0.width * k, height: $0.height * k)
+    } ?? imageBounds
+
+    /// Pixel rect (top-left origin) of pixels with alpha ≥ threshold, or nil if none.
+    static func alphaBounds(_ img: CGImage, threshold: UInt8) -> CGRect? {
+        let w = img.width, h = img.height
+        guard w > 0, h > 0 else { return nil }
+        var d = [UInt8](repeating: 0, count: w * h)
+        let ok: Bool = d.withUnsafeMutableBytes { buf in
+            guard let ctx = CGContext(data: buf.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w,
+                                      space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.alphaOnly.rawValue)
+            else { return false }
+            ctx.draw(img, in: CGRect(x: 0, y: 0, width: w, height: h))
+            return true
+        }
+        guard ok else { return nil }
+        var x0 = w, x1 = -1, y0 = h, y1 = -1
+        for y in 0..<h {
+            let row = y * w
+            var first = -1, last = -1
+            for x in 0..<w where d[row + x] >= threshold { if first < 0 { first = x }; last = x }
+            if first >= 0 { x0 = min(x0, first); x1 = max(x1, last); y0 = min(y0, y); y1 = max(y1, y) }
+        }
+        guard x1 >= x0, y1 >= y0 else { return nil }
+        // Bitmap row 0 is the top of the image.
+        return CGRect(x: x0, y: y0, width: x1 - x0 + 1, height: y1 - y0 + 1)
     }
 
     // MARK: flatten
@@ -112,26 +154,111 @@ public final class AnnotationRenderer {
         let k = deviceScale(ctx)
         ctx.saveGState()
         var imgRadius: CGFloat = 0
+        var castShadow = false
+        var ownShadowCast = false
         if let bg = doc.background, !cropping {
-            drawGradient(bg, size: size, in: ctx)
+            drawBackdrop(bg, size: size, in: ctx)
             imgRadius = min(bg.cornerRadius, crop.width / 4, crop.height / 4)
-            let r = CGRect(x: bg.padding, y: bg.padding, width: crop.width, height: crop.height)
-            if bg.shadow {
-                ctx.saveGState()
-                ctx.setShadow(offset: CGSize(width: 0, height: -10 * k), blur: 36 * k, color: CGColor(gray: 0, alpha: 0.45))
-                ctx.addPath(CGPath(roundedRect: r, cornerWidth: imgRadius, cornerHeight: imgRadius, transform: nil))
-                ctx.setFillColor(CGColor(gray: 0, alpha: 1))
-                ctx.fillPath()
-                ctx.restoreGState()
-            }
+            // Window captures carry their own rounded corners + soft shadow on a transparent margin.
+            // They are composited as-is (alpha preserved) so that lands on the backdrop; the extra
+            // shadow follows the alpha shape instead of a rectangle.
+            let ownShadow = usesOwnShadow(doc)
+            castShadow = bg.shadow && !ownShadow
+            ownShadowCast = bg.shadow && ownShadow
+            if ownShadow { imgRadius = 0 }
         }
-        // Clip to the visible image area.
-        let visible = CGRect(x: crop.minX + origin.x, y: crop.minY + origin.y, width: crop.width, height: crop.height)
+        if castShadow {
+            // Cast the shadow only *outside* the image rect, so transparent source pixels show the
+            // backdrop (never a black slab) and the cost stays one cheap fill.
+            let r = CGRect(x: crop.minX + origin.x, y: crop.minY + origin.y, width: crop.width, height: crop.height)
+            let slab = CGPath(roundedRect: r, cornerWidth: imgRadius, cornerHeight: imgRadius, transform: nil)
+            ctx.saveGState()
+            let outside = CGMutablePath()
+            outside.addRect(CGRect(origin: .zero, size: size).insetBy(dx: -200, dy: -200))
+            outside.addPath(slab)
+            ctx.addPath(outside)
+            ctx.clip(using: .evenOdd)
+            ctx.setShadow(offset: CGSize(width: 0, height: -10 * k), blur: 36 * k, color: CGColor(gray: 0, alpha: 0.45))
+            ctx.addPath(slab)
+            ctx.setFillColor(CGColor(gray: 0, alpha: 1))
+            ctx.fillPath()
+            ctx.restoreGState()
+        }
+        if ownShadowCast, let sh = alphaShadowImage() {
+            // Extra soft shadow shaped by the source's alpha (follows the window's rounded corners).
+            let pad = alphaShadowPad
+            let r = CGRect(x: origin.x - pad, y: origin.y - pad + 22,
+                           width: pointSize.width + 2 * pad, height: pointSize.height + 2 * pad)
+            drawFlipped(sh, in: r, ctx: ctx)
+        }
+        ctx.saveGState()
+        let visible = !cropping && usesOwnShadow(doc)
+            ? CGRect(origin: .zero, size: size)
+            : CGRect(x: crop.minX + origin.x, y: crop.minY + origin.y, width: crop.width, height: crop.height)
         ctx.addPath(CGPath(roundedRect: visible, cornerWidth: imgRadius, cornerHeight: imgRadius, transform: nil))
         ctx.clip()
         ctx.translateBy(x: origin.x, y: origin.y)
         drawImageSpace(doc, in: ctx, skip: skip)
         ctx.restoreGState()
+        ctx.restoreGState()
+    }
+
+    /// True when the source's four corner pixels are (nearly) transparent — e.g. a window capture
+    /// with its drop shadow. Computed once.
+    public private(set) lazy var hasTransparentEdges: Bool = Self.cornersTransparent(image)
+
+    /// Extra margin (points) around the alpha shadow image on each side.
+    let alphaShadowPad: CGFloat = 90
+    private var alphaShadowCache: CGImage??
+
+    /// Black copy of the image's alpha, blurred (built once at half resolution).
+    func alphaShadowImage() -> CGImage? {
+        if let c = alphaShadowCache { return c }
+        let k: CGFloat = 0.5
+        let pxPerPt = scale * k
+        let pad = Int((alphaShadowPad * pxPerPt).rounded())
+        let w = Int((pointSize.width * pxPerPt).rounded()) + 2 * pad
+        let h = Int((pointSize.height * pxPerPt).rounded()) + 2 * pad
+        var result: CGImage?
+        if w > 0, h > 0, let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
+            ctx.interpolationQuality = .medium
+            let r = CGRect(x: CGFloat(pad), y: CGFloat(pad), width: CGFloat(w - 2 * pad), height: CGFloat(h - 2 * pad))
+            ctx.draw(image, in: r)
+            ctx.setBlendMode(.sourceIn)
+            ctx.setFillColor(CGColor(gray: 0, alpha: 0.6))
+            ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+            if let mask = ctx.makeImage() {
+                let src = CIImage(cgImage: mask)
+                let f = CIFilter(name: "CIGaussianBlur")
+                f?.setValue(src, forKey: kCIInputImageKey)
+                f?.setValue(30 * pxPerPt, forKey: kCIInputRadiusKey)
+                if let out = f?.outputImage?.cropped(to: src.extent) { result = ci.createCGImage(out, from: src.extent) }
+            }
+        }
+        alphaShadowCache = .some(result)
+        return result
+    }
+
+    static func cornersTransparent(_ img: CGImage) -> Bool {
+        switch img.alphaInfo {
+        case .none, .noneSkipFirst, .noneSkipLast: return false
+        default: break
+        }
+        let w = img.width, h = img.height
+        guard w > 2, h > 2 else { return false }
+        var px = [UInt8](repeating: 0, count: 4)
+        let cs = CGColorSpace(name: CGColorSpace.sRGB)!
+        var transparent = 0
+        for (x, y) in [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)] {
+            guard let ctx = CGContext(data: &px, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4, space: cs,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            ctx.clear(CGRect(x: 0, y: 0, width: 1, height: 1))
+            ctx.draw(img, in: CGRect(x: -CGFloat(x), y: -CGFloat(h - 1 - y), width: CGFloat(w), height: CGFloat(h)))
+            if px[3] < 8 { transparent += 1 }
+        }
+        return transparent == 4
     }
 
     /// Image + annotations, context already in image space (y-down points).
@@ -318,8 +445,41 @@ public final class AnnotationRenderer {
         return cg
     }
 
-    private func drawGradient(_ bg: AnnotationBackground, size: CGSize, in ctx: CGContext) {
-        let p = AnnotationBackground.presets[max(0, min(bg.preset, AnnotationBackground.presets.count - 1))]
+    private func drawBackdrop(_ bg: AnnotationBackground, size: CGSize, in ctx: CGContext) {
+        let full = CGRect(origin: .zero, size: size)
+        switch bg.kind {
+        case .gradient(let i):
+            drawGradient(i, size: size, in: ctx)
+        case .solid(let c):
+            ctx.saveGState()
+            ctx.setFillColor(c.cgColor)
+            ctx.fill(full)
+            ctx.restoreGState()
+        case .image(let path):
+            guard let img = BackgroundImageCache.shared.image(path: path, blur: bg.blur) else {
+                drawGradient(AnnotationBackground.presets.count - 1, size: size, in: ctx)
+                return
+            }
+            ctx.saveGState()
+            ctx.clip(to: full)
+            // Opaque base so pictures with alpha / soft edges never leave the output translucent.
+            ctx.setFillColor(CGColor(gray: 0.1, alpha: 1))
+            ctx.fill(full)
+            drawFlipped(img, in: Self.aspectFill(CGSize(width: img.width, height: img.height), in: full), ctx: ctx)
+            ctx.restoreGState()
+        }
+    }
+
+    /// Rect of `content` scaled to cover `box` completely, centred.
+    public static func aspectFill(_ content: CGSize, in box: CGRect) -> CGRect {
+        guard content.width > 0, content.height > 0 else { return box }
+        let k = max(box.width / content.width, box.height / content.height)
+        let w = content.width * k, h = content.height * k
+        return CGRect(x: box.midX - w / 2, y: box.midY - h / 2, width: w, height: h)
+    }
+
+    private func drawGradient(_ preset: Int, size: CGSize, in ctx: CGContext) {
+        let p = AnnotationBackground.presets[max(0, min(preset, AnnotationBackground.presets.count - 1))]
         let cs = CGColorSpace(name: CGColorSpace.sRGB)!
         guard let g = CGGradient(colorsSpace: cs, colors: [p.0.cgColor, p.1.cgColor] as CFArray, locations: [0, 1]) else { return }
         ctx.saveGState()
