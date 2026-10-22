@@ -69,17 +69,11 @@ enum BackgroundStore {
         }
     }
 
-    /// Last background the user applied (for "Background" from Quick Access).
+    /// The background from Settings › Background. Tweaks made inside one Annotate window stay in that
+    /// window only; the Settings choice is the default everywhere.
     static var lastUsed: AnnotationBackground? {
-        get {
-            guard let d = UserDefaults.standard.data(forKey: lastKey),
-                  var bg = try? JSONDecoder().decode(AnnotationBackground.self, from: d) else { return nil }
-            if let p = bg.imagePath, !FileManager.default.fileExists(atPath: p) { bg.kind = .gradient(0) }
-            return bg
-        }
-        set {
-            if let newValue, let d = try? JSONEncoder().encode(newValue) { UserDefaults.standard.set(d, forKey: lastKey) }
-        }
+        get { Prefs.shared.background }
+        set { }
     }
 
     /// A sensible first background: the last used one, else the first wallpaper, else a gradient.

@@ -49,7 +49,7 @@ enum Capture {
                     do {
                         let (img, pts) = try await image(for: r, shots: shots)
                         if r.windowID == nil { lastArea = (r.rect, r.displayID) }
-                        let item = try Output.finish(img, kind: .screenshot, pointSize: pts, presentQuickAccess: then == nil)
+                        let item = try Output.finish(img, kind: .screenshot, pointSize: pts, presentQuickAccess: then == nil, isWindow: r.windowID != nil)
                         then?(item)
                     } catch { Permissions.showError("Capture failed", error) }
                 }
@@ -205,8 +205,14 @@ enum Output {
     }
 
     @discardableResult
-    static func finish(_ img: CGImage, kind: CaptureKind, pointSize: CGSize, presentQuickAccess: Bool = true) throws -> CaptureItem {
+    static func finish(_ img: CGImage, kind: CaptureKind, pointSize: CGSize, presentQuickAccess: Bool = true, isWindow: Bool = false) throws -> CaptureItem {
         let p = Prefs.shared
+        var img = img, pointSize = pointSize
+        if kind == .screenshot, p.autoBackground == .all || (p.autoBackground == .windows && isWindow),
+           let composed = withBackground(img, pointSize: pointSize, p.background) {
+            img = composed.image
+            pointSize = composed.pointSize
+        }
         let date = Date()
         if p.playSound { sound?.stop(); sound?.play() }
         var saved: URL?
@@ -223,6 +229,15 @@ enum Output {
         let item = CaptureItem(kind: kind, image: img, fileURL: file, savedURL: saved, historyID: entry?.id, pointSize: pointSize)
         if presentQuickAccess && p.showQuickAccess { QuickAccess.shared.present(item) }
         return item
+    }
+
+    /// Put a capture on a background (gradient / colour / picture) with the same renderer Annotate uses.
+    static func withBackground(_ img: CGImage, pointSize: CGSize, _ bg: AnnotationBackground) -> (image: CGImage, pointSize: CGSize)? {
+        let r = AnnotationRenderer(image: img, pointSize: pointSize)
+        var doc = AnnotationDocument()
+        doc.background = bg
+        guard let out = r.flatten(doc) else { return nil }
+        return (out, r.canvasSize(doc))
     }
 
     /// Videos/GIFs: file already written by the recorder at `url` (in the save folder or temp).

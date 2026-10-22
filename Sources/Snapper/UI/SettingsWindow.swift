@@ -38,12 +38,13 @@ enum SettingsWindow {
 }
 
 enum SettingsTab: String, CaseIterable, Identifiable {
-    case general = "General", capture = "Capture", recording = "Recording", shortcuts = "Shortcuts"
+    case general = "General", capture = "Capture", background = "Background", recording = "Recording", shortcuts = "Shortcuts"
     var id: String { rawValue }
     var symbol: String {
         switch self {
         case .general: return "gearshape"
         case .capture: return "camera.viewfinder"
+        case .background: return "photo.artframe"
         case .recording: return "record.circle"
         case .shortcuts: return "command"
         }
@@ -187,6 +188,7 @@ struct SettingsView: View {
                 switch model.tab {
                 case .general: general
                 case .capture: capture
+                case .background: BackgroundSettingsView()
                 case .recording: recording
                 case .shortcuts: shortcuts
                 }

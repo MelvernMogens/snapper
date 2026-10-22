@@ -51,6 +51,20 @@ enum CLI {
                 let img = try await ScreenGrabber.captureWindow(CGWindowID(rest[0])!)
                 try write(img, rest[1]); out("\(img.width)x\(img.height)")
                 return 0
+            case "--finish-test":
+                // Apply the Settings background to an image like a real capture would: --finish-test IN.png OUT.png window|area
+                guard let inImg = CGImageSourceCreateWithURL(URL(fileURLWithPath: rest[0]) as CFURL, nil).flatMap({ CGImageSourceCreateImageAtIndex($0, 0, nil) }) else {
+                    err("cannot read \(rest[0])"); return 1 }
+                let isWindow = rest.count > 2 && rest[2] == "window"
+                let scale = NSScreen.main?.backingScaleFactor ?? 2
+                let composed = Output.withBackground(inImg, pointSize: CGSize(width: CGFloat(inImg.width) / scale, height: CGFloat(inImg.height) / scale), Prefs.shared.background)
+                let p = Prefs.shared
+                let mode = p.autoBackground
+                let use = mode == .all || (mode == .windows && isWindow)
+                let outImg = (use ? composed?.image : nil) ?? inImg
+                try write(outImg, rest[1])
+                out("mode=\(mode.rawValue) applied=\(use && composed != nil) size=\(outImg.width)x\(outImg.height)")
+                return 0
             default:
                 if let f = extra[cmd] { return await f(rest) }
                 err("unknown command \(cmd)"); return 2

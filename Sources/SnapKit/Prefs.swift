@@ -2,6 +2,9 @@ import Foundation
 
 public enum ImageFormat: String, CaseIterable, Codable { case png, jpeg }
 
+/// Which captures get the Settings background automatically.
+public enum AutoBackground: String, CaseIterable, Codable { case off, windows, all }
+
 /// All user settings, UserDefaults-backed. One place so Settings UI and capture code agree.
 public final class Prefs {
     public static let shared = Prefs()
@@ -32,6 +35,24 @@ public final class Prefs {
     public var showQuickAccess: Bool { get { bool("showQuickAccess", true) } set { d.set(newValue, forKey: "showQuickAccess") } }
     /// Seconds before a Quick Access card closes by itself; 0 = never.
     public var quickAccessAutoClose: Int { get { d.object(forKey: "qaAutoClose") == nil ? 0 : d.integer(forKey: "qaAutoClose") } set { d.set(newValue, forKey: "qaAutoClose") } }
+    /// The background set in Settings › Background (also what Annotate's Background button starts from).
+    public var background: AnnotationBackground {
+        get {
+            guard let data = d.data(forKey: "defaultBackground"),
+                  var bg = try? JSONDecoder().decode(AnnotationBackground.self, from: data) else {
+                return AnnotationBackground(kind: .gradient(1), padding: 56, cornerRadius: 12, shadow: true)
+            }
+            if let p = bg.imagePath, !FileManager.default.fileExists(atPath: p) { bg.kind = .gradient(1) }
+            return bg
+        }
+        set { if let data = try? JSONEncoder().encode(newValue) { d.set(data, forKey: "defaultBackground") } }
+    }
+    /// Apply that background automatically after capture.
+    public var autoBackground: AutoBackground {
+        get { AutoBackground(rawValue: d.string(forKey: "autoBackground") ?? "") ?? .windows }
+        set { d.set(newValue.rawValue, forKey: "autoBackground") }
+    }
+
     /// Swiping a Quick Access card away deletes the capture (CleanShot just closes it).
     public var swipeDeletes: Bool { get { bool("swipeDeletes", true) } set { d.set(newValue, forKey: "swipeDeletes") } }
     public var playSound: Bool { get { bool("playSound", true) } set { d.set(newValue, forKey: "playSound") } }
