@@ -4,13 +4,14 @@ import SnapKit
 
 /// Every user-facing command. Menu items and hotkeys both route through `AppDelegate.perform`.
 enum Action: String, CaseIterable {
-    case area, fullscreen, window, previousArea, selfTimer
+    case allInOne, area, fullscreen, window, previousArea, selfTimer
     case ocr, scrolling, pinArea
     case recordVideo, recordGIF
     case history, openInAnnotate, settings
 
     var title: String {
         switch self {
+        case .allInOne: return "All-In-One"
         case .area: return "Capture Area"
         case .fullscreen: return "Capture Fullscreen"
         case .window: return "Capture Window"
@@ -43,6 +44,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         setupStatusItem()
         HotKeyCenter.shared.handler = { [weak self] a in self?.perform(a) }
+        // CleanShot keys: make sure macOS isn't still holding ⇧⌘3/4/5.
+        if Prefs.shared.useCommandShiftKeys && SystemShortcuts.macOSScreenshotKeysEnabled() {
+            SystemShortcuts.setMacOSScreenshotKeys(enabled: false)
+        }
         HotKeyCenter.shared.reload()
     }
 
@@ -66,6 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func rebuildMenu() {
         menu.removeAllItems()
         let groups: [[Action]] = [
+            [.allInOne],
             [.area, .previousArea, .fullscreen, .window, .selfTimer],
             [.scrolling, .ocr, .pinArea],
             [.recordVideo, .recordGIF],
@@ -101,6 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func perform(_ a: Action) {
         switch a {
+        case .allInOne: AllInOne.start()
         case .area: Capture.area()
         case .fullscreen: Capture.fullscreen()
         case .window: Capture.area(windowMode: true)

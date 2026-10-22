@@ -38,8 +38,10 @@ final class HotKey {
     }
 }
 
-/// The fixed shortcut table. Default prefix is ⌥⌘ + digit so nothing collides with macOS's own ⌘⇧3/4/5.
-/// With Prefs.replaceSystemShortcuts on, ⌘⇧3/4/5 are also bound (Settings disables the macOS ones).
+/// The fixed shortcut table.
+/// Default = CleanShot X layout: ⇧⌘2 window · ⇧⌘3 fullscreen · ⇧⌘4 area · ⇧⌘5 All-In-One. Snapper turns the macOS
+/// screenshot keys off (SystemShortcuts) so these reach us. With the CleanShot keys off, ⌥⌘ digits are used instead.
+/// The ⌥⌘ extras (previous area, record, OCR, history, scrolling) are always on.
 final class HotKeyCenter {
     static let shared = HotKeyCenter()
     var handler: (Action) -> Void = { _ in }
@@ -50,24 +52,30 @@ final class HotKeyCenter {
 
     var bindings: [Binding] {
         let oc = optionKey | cmdKey
-        var b: [Binding] = [
-            Binding(action: .fullscreen, keyCode: kVK_ANSI_3, carbonMods: oc, char: "3"),
-            Binding(action: .area, keyCode: kVK_ANSI_4, carbonMods: oc, char: "4"),
-            Binding(action: .window, keyCode: kVK_ANSI_5, carbonMods: oc, char: "5"),
+        var b: [Binding] = []
+        if Prefs.shared.useCommandShiftKeys {
+            let cs = cmdKey | shiftKey
+            b += [
+                Binding(action: .window, keyCode: kVK_ANSI_2, carbonMods: cs, char: "2"),
+                Binding(action: .fullscreen, keyCode: kVK_ANSI_3, carbonMods: cs, char: "3"),
+                Binding(action: .area, keyCode: kVK_ANSI_4, carbonMods: cs, char: "4"),
+                Binding(action: .allInOne, keyCode: kVK_ANSI_5, carbonMods: cs, char: "5"),
+            ]
+        } else {
+            b += [
+                Binding(action: .window, keyCode: kVK_ANSI_2, carbonMods: oc, char: "2"),
+                Binding(action: .fullscreen, keyCode: kVK_ANSI_3, carbonMods: oc, char: "3"),
+                Binding(action: .area, keyCode: kVK_ANSI_4, carbonMods: oc, char: "4"),
+                Binding(action: .allInOne, keyCode: kVK_ANSI_5, carbonMods: oc, char: "5"),
+            ]
+        }
+        b += [
             Binding(action: .previousArea, keyCode: kVK_ANSI_6, carbonMods: oc, char: "6"),
             Binding(action: .recordVideo, keyCode: kVK_ANSI_7, carbonMods: oc, char: "7"),
             Binding(action: .ocr, keyCode: kVK_ANSI_8, carbonMods: oc, char: "8"),
             Binding(action: .history, keyCode: kVK_ANSI_9, carbonMods: oc, char: "9"),
             Binding(action: .scrolling, keyCode: kVK_ANSI_0, carbonMods: oc, char: "0"),
         ]
-        if UserDefaults.standard.bool(forKey: "replaceSystemShortcuts") {
-            let cs = cmdKey | shiftKey
-            b += [
-                Binding(action: .fullscreen, keyCode: kVK_ANSI_3, carbonMods: cs, char: "3"),
-                Binding(action: .area, keyCode: kVK_ANSI_4, carbonMods: cs, char: "4"),
-                Binding(action: .recordVideo, keyCode: kVK_ANSI_5, carbonMods: cs, char: "5"),
-            ]
-        }
         return b
     }
 
@@ -94,4 +102,45 @@ final class HotKeyCenter {
         if b.carbonMods & controlKey != 0 { m.insert(.control) }
         return (b.char, m)
     }
+}
+
+/// Turns the macOS screenshot shortcuts (⇧⌘3, ⇧⌘4, ⇧⌘5 and their clipboard variants) on/off, like CleanShot's onboarding.
+/// Symbolic hotkey ids: 28 ⇧⌘3, 29 ⌃⇧⌘3, 30 ⇧⌘4, 31 ⌃⇧⌘4, 184 ⇧⌘5. The WindowServer picks the change up via activateSettings -u.
+enum SystemShortcuts {
+    static let ids = [28, 29, 30, 31, 184]
+
+    static func macOSScreenshotKeysEnabled() -> Bool {
+        guard let d = UserDefaults(suiteName: "com.apple.symbolichotkeys")?.dictionary(forKey: "AppleSymbolicHotKeys") else { return true }
+        return ids.contains { ((d[String($0)] as? [String: Any])?["enabled"] as? Bool) ?? true }
+    }
+
+    @discardableResult
+    static func setMacOSScreenshotKeys(enabled: Bool) -> Bool {
+        let domain = "com.apple.symbolichotkeys" as CFString
+        let key = "AppleSymbolicHotKeys" as CFString
+        CFPreferencesAppSynchronize(domain)
+        var all = (CFPreferencesCopyAppValue(key, domain) as? [String: Any]) ?? [:]
+        for id in ids {
+            // Keep the existing key parameters; only flip `enabled`.
+            var entry = (all[String(id)] as? [String: Any]) ?? defaults[id] ?? [:]
+            entry["enabled"] = enabled
+            all[String(id)] = entry
+        }
+        CFPreferencesSetAppValue(key, all as CFDictionary, domain)
+        let ok = CFPreferencesAppSynchronize(domain)
+        let a = Process()
+        a.executableURL = URL(fileURLWithPath: "/System/Library/PrivateFrameworks/SystemAdministration.framework/Resources/activateSettings")
+        a.arguments = ["-u"]
+        try? a.run(); a.waitUntilExit()
+        return ok
+    }
+
+    /// Stock key parameters (ascii, keycode, modifiers) in case an entry was never written.
+    private static let defaults: [Int: [String: Any]] = [
+        28: ["value": ["parameters": [51, 20, 1179648], "type": "standard"]],
+        29: ["value": ["parameters": [51, 20, 1441792], "type": "standard"]],
+        30: ["value": ["parameters": [52, 21, 1179648], "type": "standard"]],
+        31: ["value": ["parameters": [52, 21, 1441792], "type": "standard"]],
+        184: ["value": ["parameters": [53, 23, 1179648], "type": "standard"]],
+    ]
 }

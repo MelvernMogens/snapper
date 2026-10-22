@@ -72,11 +72,13 @@ final class SettingsModel: ObservableObject {
     @Published var recordAudioMic: Bool { didSet { p.recordAudioMic = recordAudioMic } }
     @Published var replaceSystemShortcuts: Bool {
         didSet {
-            UserDefaults.standard.set(replaceSystemShortcuts, forKey: "replaceSystemShortcuts")
+            p.useCommandShiftKeys = replaceSystemShortcuts
+            SystemShortcuts.setMacOSScreenshotKeys(enabled: !replaceSystemShortcuts)
             HotKeyCenter.shared.reload()
             refreshBindings()
         }
     }
+    @Published var organizeFolders: Bool { didSet { p.organizeFolders = organizeFolders } }
     @Published var launchAtLogin: Bool = false
     @Published var loginError: String?
     @Published var bindings: [BindingRow] = []
@@ -103,7 +105,8 @@ final class SettingsModel: ObservableObject {
         recordFPS = p.recordFPS
         recordShowClicks = p.recordShowClicks
         recordAudioMic = p.recordAudioMic
-        replaceSystemShortcuts = UserDefaults.standard.bool(forKey: "replaceSystemShortcuts")
+        replaceSystemShortcuts = p.useCommandShiftKeys
+        organizeFolders = p.organizeFolders
         launchAtLogin = SMAppService.mainApp.status == .enabled
         refreshBindings()
     }
@@ -238,6 +241,10 @@ struct SettingsView: View {
                         Button("Choose…") { model.chooseFolder() }
                     }
                 }
+                Toggle(isOn: $model.organizeFolders) {
+                    Text("Organize into folders")
+                    Text("Screenshots / Recordings / GIFs, then one folder per month")
+                }
                 Toggle("Save automatically", isOn: $model.autoSave)
                 Toggle("Copy to clipboard", isOn: $model.autoCopy)
                 Toggle("Show Quick Access overlay", isOn: $model.showQuickAccess)
@@ -288,8 +295,8 @@ struct SettingsView: View {
         Form {
             Section {
                 Toggle(isOn: $model.replaceSystemShortcuts) {
-                    Text("Use ⇧⌘3 / ⇧⌘4 / ⇧⌘5")
-                    Text("Full screen, area and recording take over the macOS screenshot keys")
+                    Text("Use ⇧⌘2 / ⇧⌘3 / ⇧⌘4 / ⇧⌘5 (CleanShot keys)")
+                    Text("Window, full screen, area and All-In-One. Snapper switches the macOS screenshot keys off for you; turning this off gives them back.")
                 }
                 if model.replaceSystemShortcuts {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {

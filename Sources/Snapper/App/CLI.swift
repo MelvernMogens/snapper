@@ -24,6 +24,13 @@ enum CLI {
                 for s in NSScreen.screens { out("screen \(s.displayID) frame=\(s.frame) scale=\(s.backingScaleFactor)") }
                 out("saveDirectory=\(Prefs.shared.saveDirectory.path) history=\(HistoryStore.shared.entries.count)")
                 return 0
+            case "--allinone":
+                AllInOne.start()
+                while true { try? await Task.sleep(for: .seconds(60)) }
+            case "--shortcuts":
+                out("useCommandShiftKeys=\(Prefs.shared.useCommandShiftKeys) macOSKeysEnabled=\(SystemShortcuts.macOSScreenshotKeysEnabled())")
+                for b in HotKeyCenter.shared.bindings { out("\(b.action.rawValue) \(b.char) mods=\(b.carbonMods)") }
+                return 0
             case "--windows":
                 for w in ScreenGrabber.windowList().prefix(15) { out("\(w.id)\t\(w.owner)\t\(w.rect)") }
                 return 0

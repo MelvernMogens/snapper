@@ -23,6 +23,21 @@ enum OCR {
         }
     }
 
+    /// OCR a rect that was already chosen elsewhere (All-In-One).
+    static func captureText(rect: CGRect, screen: NSScreen) {
+        Task { @MainActor in
+            do {
+                let shot = try await ScreenGrabber.captureDisplay(screen.displayID)
+                let crop = try Capture.crop(shot, global: rect, screen: screen)
+                let id = screen.displayID
+                Task.detached(priority: .userInitiated) {
+                    let text = (try? recognize(crop)) ?? ""
+                    await MainActor.run { deliver(text, screen: NSScreen.withDisplayID(id) ?? .underMouse) }
+                }
+            } catch { Permissions.showError("Capture failed", error) }
+        }
+    }
+
     private static func deliver(_ text: String, screen: NSScreen) {
         guard !text.isEmpty else {
             NSSound.beep()

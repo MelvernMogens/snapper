@@ -100,6 +100,19 @@ enum Capture {
         }
     }
 
+    /// Capture a known global rect on the live screen (All-In-One, previous area).
+    static func capture(rect: CGRect, screen: NSScreen, then: ((CaptureItem) -> Void)? = nil) {
+        Task { @MainActor in
+            do {
+                let shot = try await ScreenGrabber.captureDisplay(screen.displayID)
+                let img = try crop(shot, global: rect, screen: screen)
+                lastArea = (rect, screen.displayID)
+                let item = try Output.finish(img, kind: .screenshot, pointSize: rect.size, presentQuickAccess: then == nil)
+                then?(item)
+            } catch { Permissions.showError("Capture failed", error) }
+        }
+    }
+
     /// Pick an area on the live screen, count down, then capture it (menus/hover states stay open).
     static func selfTimer(seconds: Int) {
         guard OverlayController.current == nil, Permissions.ensureScreenRecording() else { return }
@@ -183,8 +196,9 @@ enum Output {
     static func save(_ img: CGImage, date: Date = Date()) throws -> URL {
         let p = Prefs.shared
         let ext = p.imageFormat == .png ? "png" : "jpg"
-        try FileManager.default.createDirectory(at: p.saveDirectory, withIntermediateDirectories: true)
-        let url = Naming.unique(in: p.saveDirectory, name: Naming.filename(.screenshot, date: date, ext: ext))
+        let dir = p.directory(for: .screenshot, date: date)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = Naming.unique(in: dir, name: Naming.filename(.screenshot, date: date, ext: ext))
         guard let data = encode(img, format: p.imageFormat) else { throw GrabError(message: "Could not encode image") }
         try data.write(to: url)
         return url
@@ -218,7 +232,10 @@ enum Output {
         var saved: URL? = nil
         var file = url
         if p.autoSave {
-            let dst = Naming.unique(in: p.saveDirectory, name: Naming.filename(kind, date: Date(), ext: url.pathExtension))
+            let now = Date()
+            let dir = p.directory(for: kind, date: now)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let dst = Naming.unique(in: dir, name: Naming.filename(kind, date: now, ext: url.pathExtension))
             if (try? FileManager.default.moveItem(at: url, to: dst)) != nil { saved = dst; file = dst }
         }
         if p.autoCopy { copyFile(file) }

@@ -13,10 +13,18 @@ public final class Prefs {
     public var saveDirectory: URL {
         get {
             if let p = d.string(forKey: "saveDirectory"), !p.isEmpty { return URL(fileURLWithPath: p) }
-            return FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]
+            return FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask)[0].appendingPathComponent("Snapper", isDirectory: true)
         }
         set { d.set(newValue.path, forKey: "saveDirectory") }
     }
+    /// Sort saves into Screenshots/Recordings/GIFs + month sub-folders inside saveDirectory.
+    public var organizeFolders: Bool { get { bool("organizeFolders", true) } set { d.set(newValue, forKey: "organizeFolders") } }
+    /// Where a capture of `kind` taken at `date` is saved.
+    public func directory(for kind: CaptureKind, date: Date) -> URL {
+        organizeFolders ? saveDirectory.appendingPathComponent(Naming.folder(kind, date: date), isDirectory: true) : saveDirectory
+    }
+    /// Use ⇧⌘2/3/4/5 like CleanShot (and switch the macOS screenshot keys off). Off = ⌥⌘ digits.
+    public var useCommandShiftKeys: Bool { get { bool("replaceSystemShortcuts", true) } set { d.set(newValue, forKey: "replaceSystemShortcuts") } }
     /// After capture: write file to saveDirectory.
     public var autoSave: Bool { get { bool("autoSave", true) } set { d.set(newValue, forKey: "autoSave") } }
     /// After capture: put image on clipboard.

@@ -49,6 +49,20 @@ final class NamingTests: XCTestCase {
         XCTAssertEqual(Naming.filename(.recording, date: d, ext: "mp4"), "Snapper Recording 2026-10-22 at 23.05.09.mp4")
     }
 
+    func testOrganizedFolders() {
+        var c = DateComponents(); c.year = 2026; c.month = 3; c.day = 2
+        let d = Calendar(identifier: .gregorian).date(from: c)!
+        XCTAssertEqual(Naming.folder(.screenshot, date: d), "Screenshots/2026-03")
+        XCTAssertEqual(Naming.folder(.recording, date: d), "Recordings/2026-03")
+        XCTAssertEqual(Naming.folder(.gif, date: d), "GIFs/2026-03")
+        let p = Prefs(defaults: UserDefaults(suiteName: "snapper-test-\(UUID())")!)
+        XCTAssertTrue(p.saveDirectory.path.hasSuffix("/Movies/Snapper"))
+        XCTAssertTrue(p.directory(for: .gif, date: d).path.hasSuffix("/Movies/Snapper/GIFs/2026-03"))
+        p.organizeFolders = false
+        XCTAssertEqual(p.directory(for: .gif, date: d), p.saveDirectory)
+        XCTAssertTrue(p.useCommandShiftKeys)
+    }
+
     func testUniqueAppendsCounter() {
         let dir = URL(fileURLWithPath: "/tmp/x")
         let taken: Set<String> = ["/tmp/x/a.png", "/tmp/x/a 2.png"]

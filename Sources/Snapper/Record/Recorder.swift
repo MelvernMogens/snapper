@@ -51,6 +51,13 @@ final class Recorder: NSObject {
         if began == nil { phase = .idle; NSSound.beep() }
     }
 
+    /// Record a rect that was already chosen elsewhere (All-In-One).
+    func record(rect: CGRect, screen: NSScreen, gif: Bool) {
+        guard phase == .idle, Permissions.ensureScreenRecording() else { return }
+        self.gif = gif
+        begin(rect: rect, screen: screen)
+    }
+
     private func begin(rect: CGRect, screen: NSScreen) {
         let fps = gif ? min(Self.gifFPS, max(1, Prefs.shared.recordFPS)) : max(1, Prefs.shared.recordFPS)
         guard let plan = RecordMath.plan(global: rect, screenFrame: screen.frame, scale: screen.backingScaleFactor) else {

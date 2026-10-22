@@ -16,6 +16,20 @@ public enum Naming {
         return "\(label) \(f.string(from: date)).\(ext)"
     }
 
+    /// Organized sub-folder for a capture: "Screenshots/2026-10", "Recordings/2026-10", "GIFs/2026-10".
+    public static func folder(_ kind: CaptureKind, date: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM"
+        let top: String
+        switch kind {
+        case .screenshot: top = "Screenshots"
+        case .recording: top = "Recordings"
+        case .gif: top = "GIFs"
+        }
+        return top + "/" + f.string(from: date)
+    }
+
     /// First non-existing URL: name.ext, name 2.ext, name 3.ext …
     public static func unique(in dir: URL, name: String, exists: (URL) -> Bool = { FileManager.default.fileExists(atPath: $0.path) }) -> URL {
         let base = (name as NSString).deletingPathExtension
