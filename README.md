@@ -74,9 +74,9 @@ relaunch it, and grant access again.
 | # | Scope | Status |
 |---|---|---|
 | M1 | Capture core + Quick Access + history store | done |
-| M2 | Annotate editor | in progress |
-| M3 | MP4 / GIF recording | in progress |
-| M4 | OCR, pin, scrolling capture, history UI, settings | in progress |
+| M2 | Annotate editor | done |
+| M3 | MP4 / GIF recording | done |
+| M4 | OCR, pin, scrolling capture, history UI, settings | done |
 | M5 | Integration polish | todo |
 
 ## Docs

@@ -36,9 +36,9 @@ Product scope, non-goals, and open questions live in `docs/prd.md`.
 | # | Scope | Status | Model / effort |
 |---|---|---|---|
 | M1 | Capture core: overlay + loupe, area/window/full/previous/timer, Quick Access, history store, hotkeys, CLI | done | Opus / high |
-| M2 | Annotate editor (arrow, shapes, text, blur, highlight, counter, spotlight, crop, undo, background) | in progress | Opus / high |
-| M3 | Recording: MP4 + GIF, click rings, pause/restart, menu-bar timer | in progress | Opus / high |
-| M4 | Tools: OCR, pin, scrolling capture, history window, settings, icon | in progress | Opus / high |
+| M2 | Annotate editor (arrow, shapes, text, blur, highlight, counter, spotlight, crop, undo, background) | done (awaiting user review) | Opus / high |
+| M3 | Recording: MP4 + GIF, click rings, pause/restart, menu-bar timer | done (awaiting user review) | Opus / high |
+| M4 | Tools: OCR, pin, scrolling capture, history window, settings, icon | done (awaiting user review) | Opus / high |
 | M5 | Integration polish: install, real-use pass, fix papercuts | todo | Opus / high |
 
 **State the model and effort at the start of every milestone, before working.**
