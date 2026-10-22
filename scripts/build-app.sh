@@ -2,9 +2,9 @@
 # Build Snapper.app: release build -> .app bundle -> ad-hoc codesign.
 # Usage: scripts/build-app.sh [--install]   (--install copies to /Applications and launches)
 #
-# Signing note: ad-hoc signatures change every build, so macOS may ask for Screen Recording again
-# after a rebuild. If it does: System Settings -> Privacy & Security -> Screen & System Audio Recording,
-# remove Snapper with "-", relaunch, grant once.
+# Signing: uses the local self-signed identity in ~/.snapper-signing (scripts/make-signing-identity.sh) so the
+# code signature's designated requirement stays the same across rebuilds and macOS keeps the Screen Recording
+# grant. Falls back to ad-hoc (grant resets on every rebuild) when the identity is missing.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -18,7 +18,15 @@ cp "$BIN" "$APP/Contents/MacOS/Snapper"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 [ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
-codesign --force --sign - --identifier com.melvern.snapper "$APP"
+KC="$HOME/.snapper-signing/snapper.keychain-db"
+if [ -f "$KC" ]; then
+  security unlock-keychain -p "$(cat "$HOME/.snapper-signing/pass")" "$KC"
+  ID=$(security find-identity -p codesigning "$KC" | awk '/Snapper Local Signing/ {print $2; exit}')
+  codesign --force --sign "$ID" --keychain "$KC" --identifier com.melvern.snapper "$APP"
+else
+  echo "warning: no local signing identity, using ad-hoc (Screen Recording grant will reset)"
+  codesign --force --sign - --identifier com.melvern.snapper "$APP"
+fi
 echo "built $APP"
 
 if [ "${1:-}" = "--install" ]; then
