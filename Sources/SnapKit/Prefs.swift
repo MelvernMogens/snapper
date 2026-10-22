@@ -1,0 +1,40 @@
+import Foundation
+
+public enum ImageFormat: String, CaseIterable, Codable { case png, jpeg }
+
+/// All user settings, UserDefaults-backed. One place so Settings UI and capture code agree.
+public final class Prefs {
+    public static let shared = Prefs()
+    let d: UserDefaults
+    public init(defaults: UserDefaults = .standard) { d = defaults }
+
+    private func bool(_ k: String, _ def: Bool) -> Bool { d.object(forKey: k) == nil ? def : d.bool(forKey: k) }
+
+    public var saveDirectory: URL {
+        get {
+            if let p = d.string(forKey: "saveDirectory"), !p.isEmpty { return URL(fileURLWithPath: p) }
+            return FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]
+        }
+        set { d.set(newValue.path, forKey: "saveDirectory") }
+    }
+    /// After capture: write file to saveDirectory.
+    public var autoSave: Bool { get { bool("autoSave", true) } set { d.set(newValue, forKey: "autoSave") } }
+    /// After capture: put image on clipboard.
+    public var autoCopy: Bool { get { bool("autoCopy", true) } set { d.set(newValue, forKey: "autoCopy") } }
+    public var showQuickAccess: Bool { get { bool("showQuickAccess", true) } set { d.set(newValue, forKey: "showQuickAccess") } }
+    /// Seconds before a Quick Access card closes by itself; 0 = never.
+    public var quickAccessAutoClose: Int { get { d.object(forKey: "qaAutoClose") == nil ? 0 : d.integer(forKey: "qaAutoClose") } set { d.set(newValue, forKey: "qaAutoClose") } }
+    public var playSound: Bool { get { bool("playSound", true) } set { d.set(newValue, forKey: "playSound") } }
+    public var windowShadow: Bool { get { bool("windowShadow", true) } set { d.set(newValue, forKey: "windowShadow") } }
+    public var showMagnifier: Bool { get { bool("showMagnifier", true) } set { d.set(newValue, forKey: "showMagnifier") } }
+    public var showCrosshair: Bool { get { bool("showCrosshair", true) } set { d.set(newValue, forKey: "showCrosshair") } }
+    public var hideDesktopIcons: Bool { get { bool("hideDesktopIcons", false) } set { d.set(newValue, forKey: "hideDesktopIcons") } }
+    public var imageFormat: ImageFormat {
+        get { ImageFormat(rawValue: d.string(forKey: "imageFormat") ?? "") ?? .png }
+        set { d.set(newValue.rawValue, forKey: "imageFormat") }
+    }
+    /// Recording: show mouse clicks as rings.
+    public var recordShowClicks: Bool { get { bool("recordShowClicks", true) } set { d.set(newValue, forKey: "recordShowClicks") } }
+    public var recordAudioMic: Bool { get { bool("recordAudioMic", false) } set { d.set(newValue, forKey: "recordAudioMic") } }
+    public var recordFPS: Int { get { d.object(forKey: "recordFPS") == nil ? 60 : d.integer(forKey: "recordFPS") } set { d.set(newValue, forKey: "recordFPS") } }
+}
