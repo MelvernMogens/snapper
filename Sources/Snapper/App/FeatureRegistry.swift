@@ -11,5 +11,6 @@ extension CLI {
         Pinner.registerCLI()
         HistoryWindow.registerCLI()
         SettingsWindow.registerCLI()
+        QuickAccess.registerCLI()
     }
 }
