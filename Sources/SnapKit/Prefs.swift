@@ -5,7 +5,7 @@ public enum ImageFormat: String, CaseIterable, Codable { case png, jpeg }
 /// All user settings, UserDefaults-backed. One place so Settings UI and capture code agree.
 public final class Prefs {
     public static let shared = Prefs()
-    let d: UserDefaults
+    public let d: UserDefaults
     public init(defaults: UserDefaults = .standard) { d = defaults }
 
     private func bool(_ k: String, _ def: Bool) -> Bool { d.object(forKey: k) == nil ? def : d.bool(forKey: k) }
