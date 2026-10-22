@@ -1,42 +1,24 @@
-# Threat model — snapper
+# Threat model — Snapper
 
-Re-read at the start of each milestone; a threat model
-that is never revisited is decoration.
+Small attack surface: a local, single-user menu-bar app. It has no network, no accounts and no stored secrets.
 
 ## What we protect, and from whom
 
 | Asset | Adversary | Why it matters |
 |---|---|---|
-{{ASSETS}}
-
-Name the adversary concretely. "A hacker" is useless. "A player who has
-decompiled the client", "a logged-in user changing an id in a request", "an
-employee about to resign" each lead somewhere.
+| Captured pixels (may show passwords, chats, banking) | Anything that can read `~/Library/Application Support/Snapper/History` or the Desktop | History keeps a private copy of every capture until trimmed (300) or cleared |
+| Screen Recording permission | Another process abusing a granted, ad-hoc-signed binary | The grant is tied to this binary; a swapped binary at the same path loses it on signature change |
 
 ## Current posture
-
-{{POSTURE}}
-
-Be honest about what is not built yet. "No auth" written down is safe;
-"no auth" forgotten is a breach.
+- There is no network code at all. Nothing is uploaded.
+- History files are plain PNG/MP4 in the user's Library, with the same protection as the Desktop.
+- Blur/pixelate in Annotate is applied to the flattened pixels. The saved file does not contain the original pixels under the blur.
 
 ## Rules that must hold
-
-{{RULES}}
-
-Each rule should be enforceable by something other than memory — a test, a
-type, a lint, a CI step. A rule that relies on remembering will be broken.
+- No networking APIs in the package (`grep -rn "URLSession\|NWConnection" Sources` must stay empty).
+- The blur tool must modify output pixels. This is enforced by the annotation flatten unit test.
+- Snapper's own overlay/HUD windows are excluded from every capture (ScreenGrabber own-pid filter).
 
 ## Accepted risks
-
-{{ACCEPTED}}
-
-Things knowingly not fixed, and why. This is the section that stops a future
-reader from assuming an oversight.
-
-## Practice
-
-- `/ship` before calling any milestone done — it runs tests, a code review,
-  and a scoped security pass.
-- CI runs the checks on every push.
-- When a security-relevant assumption changes, edit this file in the same commit.
+- History is not encrypted at rest. FileVault covers the disk, and "Clear history" exists.
+- It is not notarized, which is acceptable for a single-machine personal tool.
