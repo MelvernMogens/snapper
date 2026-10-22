@@ -209,7 +209,7 @@ enum Output {
         let p = Prefs.shared
         var img = img, pointSize = pointSize
         if kind == .screenshot, p.autoBackground == .all || (p.autoBackground == .windows && isWindow),
-           let composed = withBackground(img, pointSize: pointSize, p.background) {
+           let composed = withBackground(img, pointSize: pointSize, MacWallpaper.effective(p.background)) {
             img = composed.image
             pointSize = composed.pointSize
         }

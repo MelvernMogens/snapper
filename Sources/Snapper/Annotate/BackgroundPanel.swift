@@ -72,7 +72,7 @@ enum BackgroundStore {
     /// The background from Settings › Background. Tweaks made inside one Annotate window stay in that
     /// window only; the Settings choice is the default everywhere.
     static var lastUsed: AnnotationBackground? {
-        get { Prefs.shared.background }
+        get { MacWallpaper.effective(Prefs.shared.background) }
         set { }
     }
 

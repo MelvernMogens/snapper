@@ -1,3 +1,4 @@
+import ScreenCaptureKit
 import AppKit
 import SnapKit
 
@@ -51,13 +52,23 @@ enum CLI {
                 let img = try await ScreenGrabber.captureWindow(CGWindowID(rest[0])!)
                 try write(img, rest[1]); out("\(img.width)x\(img.height)")
                 return 0
+            case "--sc-windows":
+                let c = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+                for w in c.windows where (w.title ?? "").lowercased().contains("wall") || w.windowLayer < 0 || (w.owningApplication?.bundleIdentifier ?? "").contains("wallpaper") || (w.owningApplication?.bundleIdentifier ?? "").contains("dock") {
+                    out("\(w.windowID) layer=\(w.windowLayer) title=\(w.title ?? "-") app=\(w.owningApplication?.bundleIdentifier ?? "-") frame=\(w.frame) onscreen=\(w.isOnScreen)")
+                }
+                return 0
+            case "--mac-wallpaper":
+                await withCheckedContinuation { k in MacWallpaper.refresh { k.resume() } }
+                out("desktopFile=\(BackgroundStore.currentDesktopPicture?.path ?? "none") snapshot=\(FileManager.default.fileExists(atPath: MacWallpaper.snapshotURL.path)) using=\(MacWallpaper.path ?? "none")")
+                return 0
             case "--finish-test":
                 // Apply the Settings background to an image like a real capture would: --finish-test IN.png OUT.png window|area
                 guard let inImg = CGImageSourceCreateWithURL(URL(fileURLWithPath: rest[0]) as CFURL, nil).flatMap({ CGImageSourceCreateImageAtIndex($0, 0, nil) }) else {
                     err("cannot read \(rest[0])"); return 1 }
                 let isWindow = rest.count > 2 && rest[2] == "window"
                 let scale = NSScreen.main?.backingScaleFactor ?? 2
-                let composed = Output.withBackground(inImg, pointSize: CGSize(width: CGFloat(inImg.width) / scale, height: CGFloat(inImg.height) / scale), Prefs.shared.background)
+                let composed = Output.withBackground(inImg, pointSize: CGSize(width: CGFloat(inImg.width) / scale, height: CGFloat(inImg.height) / scale), MacWallpaper.effective(Prefs.shared.background))
                 let p = Prefs.shared
                 let mode = p.autoBackground
                 let use = mode == .all || (mode == .windows && isWindow)

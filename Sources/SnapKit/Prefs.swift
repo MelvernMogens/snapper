@@ -47,6 +47,8 @@ public final class Prefs {
         }
         set { if let data = try? JSONEncoder().encode(newValue) { d.set(data, forKey: "defaultBackground") } }
     }
+    /// Always use whatever the Mac's desktop wallpaper currently is (overrides the picked background's picture).
+    public var followMacWallpaper: Bool { get { bool("followMacWallpaper", false) } set { d.set(newValue, forKey: "followMacWallpaper") } }
     /// Apply that background automatically after capture.
     public var autoBackground: AutoBackground {
         get { AutoBackground(rawValue: d.string(forKey: "autoBackground") ?? "") ?? .windows }

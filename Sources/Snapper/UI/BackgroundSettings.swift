@@ -7,13 +7,20 @@ import UniformTypeIdentifiers
 /// Snapper puts window captures on it automatically. The preview is rendered by the same code that renders
 /// the real capture, so what you see is exactly what you get.
 final class BackgroundSettingsModel: ObservableObject {
-    @Published var bg: AnnotationBackground { didSet { Prefs.shared.background = bg; renderPreview() } }
+    @Published var bg: AnnotationBackground {
+        didSet {
+            Prefs.shared.background = bg
+            renderPreview()
+        }
+    }
+    @Published var followMac: Bool { didSet { Prefs.shared.followMacWallpaper = followMac; renderPreview() } }
     @Published var auto: AutoBackground { didSet { Prefs.shared.autoBackground = auto } }
     @Published var preview: NSImage?
     @Published var pictures: [URL] = []
 
     init() {
         bg = Prefs.shared.background
+        followMac = Prefs.shared.followMacWallpaper
         auto = Prefs.shared.autoBackground
         reloadPictures()
         renderPreview()
@@ -26,7 +33,15 @@ final class BackgroundSettingsModel: ObservableObject {
         pictures = list
     }
 
-    func isSelected(_ url: URL) -> Bool { bg.imagePath == url.path }
+    func isSelected(_ url: URL) -> Bool { !followMac && bg.imagePath == url.path }
+
+    /// Picking any specific gradient / colour / picture switches "Use Mac wallpaper" off.
+    func pick(_ k: AnnotationBackground.Kind) { followMac = false; bg.kind = k }
+
+    func useMacWallpaper() {
+        followMac = true
+        MacWallpaper.refresh { [weak self] in self?.renderPreview() }
+    }
 
     func choosePicture() {
         let panel = NSOpenPanel()
@@ -34,7 +49,7 @@ final class BackgroundSettingsModel: ObservableObject {
         panel.allowsMultipleSelection = false
         NSApp.activate(ignoringOtherApps: true)
         guard panel.runModal() == .OK, let u = panel.url, let saved = BackgroundStore.importPicture(u) else { return }
-        bg.kind = .image(saved.path)
+        pick(.image(saved.path))
         reloadPictures()
     }
 
@@ -43,7 +58,7 @@ final class BackgroundSettingsModel: ObservableObject {
     }
     func setSolid(_ c: Color) {
         let ns = NSColor(c).usingColorSpace(.sRGB) ?? .white
-        bg.kind = .solid(RGBA(ns.redComponent, ns.greenComponent, ns.blueComponent, 1))
+        pick(.solid(RGBA(ns.redComponent, ns.greenComponent, ns.blueComponent, 1)))
     }
 
     /// A mock window rendered at 2x, put on the background exactly like a real capture.
@@ -70,11 +85,12 @@ final class BackgroundSettingsModel: ObservableObject {
     }()
 
     func renderPreview() {
-        let bg = self.bg
+        let bg = MacWallpaper.effective(self.bg)
+        let key = self.bg, follow = followMac
         DispatchQueue.global(qos: .userInitiated).async {
             let out = Output.withBackground(Self.sample, pointSize: CGSize(width: 360, height: 220), bg)
             DispatchQueue.main.async {
-                guard bg == self.bg, let out else { return }
+                guard key == self.bg, follow == self.followMac, let out else { return }
                 self.preview = NSImage(cgImage: out.image, size: out.pointSize)
             }
         }
@@ -103,14 +119,31 @@ struct BackgroundSettingsView: View {
                     Text("Only when I ask (Annotate)").tag(AutoBackground.off)
                 }
             }
-            Section("Background") {
+            Section {
+                HStack(spacing: 10) {
+                    Image(systemName: "desktopcomputer").font(.system(size: 14)).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Use Mac wallpaper")
+                        Text(m.followMac ? "On — follows your desktop picture, even when you change it" : "Always use whatever your desktop picture is")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if m.followMac {
+                        Label("In use", systemImage: "checkmark.circle.fill")
+                            .font(.caption.weight(.medium)).foregroundStyle(Color.accentColor)
+                    } else {
+                        Button("Use") { m.useMacWallpaper() }
+                    }
+                }
+            }
+            Section("Or pick one") {
                 LabeledContent("Gradient") {
                     HStack(spacing: 6) {
                         ForEach(0..<AnnotationBackground.presets.count, id: \.self) { i in
                             let p = AnnotationBackground.presets[i]
-                            Chip(selected: m.bg.preset == i) {
+                            Chip(selected: !m.followMac && m.bg.preset == i) {
                                 LinearGradient(colors: [Color(cgColor: p.0.cgColor), Color(cgColor: p.1.cgColor)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                            } action: { m.bg.kind = .gradient(i) }
+                            } action: { m.pick(.gradient(i)) }
                         }
                         ColorPicker("", selection: Binding(get: { m.solidColor }, set: { m.setSolid($0) }), supportsOpacity: false)
                             .labelsHidden()
@@ -129,7 +162,7 @@ struct BackgroundSettingsView: View {
                         .buttonStyle(.plain)
                         .help("Choose any picture…")
                         ForEach(m.pictures, id: \.self) { u in
-                            Chip(selected: m.isSelected(u), w: 44, h: 28) { Thumb(url: u) } action: { m.bg.kind = .image(u.path) }
+                            Chip(selected: m.isSelected(u), w: 44, h: 28) { Thumb(url: u) } action: { m.pick(.image(u.path)) }
                                 .help(u.deletingPathExtension().lastPathComponent)
                         }
                     }
