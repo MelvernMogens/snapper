@@ -6,3 +6,7 @@ node_modules/
 dist/
 build/
 .DS_Store
+build/
+.DS_Store
+.build/
+.swiftpm/
