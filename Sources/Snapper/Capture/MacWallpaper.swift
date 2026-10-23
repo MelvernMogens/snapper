@@ -63,14 +63,12 @@ enum MacWallpaper {
         }
     }
 
-    /// Keep the snapshot fresh: at launch, on Space changes, on wake, and every 30 minutes.
-    static func startWatching() {
-        guard observers.isEmpty else { return }
-        refresh()
-        let nc = NSWorkspace.shared.notificationCenter
-        for n in [NSWorkspace.activeSpaceDidChangeNotification, NSWorkspace.didWakeNotification] {
-            observers.append(nc.addObserver(forName: n, object: nil, queue: .main) { _ in refresh() })
-        }
-        observers.append(Timer.scheduledTimer(withTimeInterval: 1800, repeats: true) { _ in refresh() })
+    /// Called by captures right before the background is applied. Snapshotting only here means the
+    /// screen-recording indicator only ever shows while you are actually capturing.
+    static func prepare(isWindow: Bool) async {
+        let p = Prefs.shared
+        guard p.followMacWallpaper, BackgroundStore.currentDesktopPicture == nil,
+              p.autoBackground == .all || (p.autoBackground == .windows && isWindow) else { return }
+        await withCheckedContinuation { k in refresh { k.resume() } }
     }
 }

@@ -34,7 +34,6 @@ enum Annotator {
             if let img = item.image {
                 e = AnnotateEditor(image: img, pointSize: item.pointSize, item: item, sourceURL: item.savedURL ?? item.fileURL)
             } else if let (img, pts) = loadImage(item.fileURL) {
-                item.image = img
                 e = AnnotateEditor(image: img, pointSize: pts, item: item, sourceURL: item.savedURL ?? item.fileURL)
             } else { NSSound.beep(); return }
             present(e)

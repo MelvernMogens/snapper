@@ -49,7 +49,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             SystemShortcuts.setMacOSScreenshotKeys(enabled: false)
         }
         HotKeyCenter.shared.reload()
-        MacWallpaper.startWatching()
     }
 
     func setupStatusItem() {

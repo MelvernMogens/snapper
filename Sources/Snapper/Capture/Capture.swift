@@ -5,7 +5,13 @@ import UniformTypeIdentifiers
 /// One finished capture, as passed to Quick Access, Annotate, Pin and History.
 final class CaptureItem {
     let kind: CaptureKind
-    var image: CGImage?            // nil for videos
+    /// Only an edited (annotated) image is held in memory; otherwise pixels are read from `fileURL` on demand,
+    /// so a stack of Quick Access cards doesn't pin several full-resolution screenshots in RAM.
+    private var edited: CGImage?
+    var image: CGImage? {
+        get { edited ?? (kind == .screenshot ? CaptureItem.decode(fileURL) : nil) }
+        set { edited = newValue }
+    }
     /// The working file (history copy). Always exists.
     var fileURL: URL
     /// The user-visible saved file, if auto-save or "Save" put one somewhere.
@@ -15,13 +21,42 @@ final class CaptureItem {
     var pointSize: CGSize
 
     init(kind: CaptureKind, image: CGImage?, fileURL: URL, savedURL: URL?, historyID: UUID?, pointSize: CGSize) {
-        self.kind = kind; self.image = image; self.fileURL = fileURL; self.savedURL = savedURL
+        self.kind = kind; self.fileURL = fileURL; self.savedURL = savedURL
         self.historyID = historyID; self.pointSize = pointSize
     }
 
     var nsImage: NSImage? {
         if let image { return NSImage(cgImage: image, size: pointSize) }
         return NSImage(contentsOf: fileURL)
+    }
+
+    /// Small preview for cards and grids (longest edge ≤ maxPixel), never the full image.
+    func thumbnail(maxPixel: Int = 640) -> NSImage? {
+        let cg: CGImage?
+        if let edited {
+            cg = CaptureItem.downscale(edited, maxPixel: maxPixel)
+        } else if let src = CGImageSourceCreateWithURL(fileURL as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) {
+            cg = CGImageSourceCreateThumbnailAtIndex(src, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                                                              kCGImageSourceCreateThumbnailWithTransform: true,
+                                                              kCGImageSourceThumbnailMaxPixelSize: maxPixel] as CFDictionary)
+        } else { cg = nil }
+        guard let cg else { return nil }
+        return NSImage(cgImage: cg, size: pointSize)
+    }
+
+    static func decode(_ url: URL) -> CGImage? {
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else { return nil }
+        return CGImageSourceCreateImageAtIndex(src, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+    }
+
+    static func downscale(_ img: CGImage, maxPixel: Int) -> CGImage? {
+        let s = min(1, CGFloat(maxPixel) / CGFloat(max(img.width, img.height)))
+        let w = max(1, Int(CGFloat(img.width) * s)), h = max(1, Int(CGFloat(img.height) * s))
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.interpolationQuality = .high
+        ctx.draw(img, in: CGRect(x: 0, y: 0, width: w, height: h))
+        return ctx.makeImage()
     }
 }
 
@@ -49,6 +84,7 @@ enum Capture {
                     do {
                         let (img, pts) = try await image(for: r, shots: shots)
                         if r.windowID == nil { lastArea = (r.rect, r.displayID) }
+                        await MacWallpaper.prepare(isWindow: r.windowID != nil)
                         let item = try Output.finish(img, kind: .screenshot, pointSize: pts, presentQuickAccess: then == nil, isWindow: r.windowID != nil)
                         then?(item)
                     } catch { Permissions.showError("Capture failed", error) }
@@ -82,6 +118,7 @@ enum Capture {
         Task { @MainActor in
             do {
                 let img = try await ScreenGrabber.captureDisplay(s.displayID)
+                await MacWallpaper.prepare(isWindow: false)
                 let item = try Output.finish(img, kind: .screenshot, pointSize: s.frame.size, presentQuickAccess: then == nil)
                 then?(item)
             } catch { Permissions.showError("Capture failed", error) }
@@ -95,6 +132,7 @@ enum Capture {
             do {
                 let shot = try await ScreenGrabber.captureDisplay(s.displayID)
                 let img = try crop(shot, global: last.rect, screen: s)
+                await MacWallpaper.prepare(isWindow: false)
                 _ = try Output.finish(img, kind: .screenshot, pointSize: last.rect.size)
             } catch { Permissions.showError("Capture failed", error) }
         }
@@ -107,6 +145,7 @@ enum Capture {
                 let shot = try await ScreenGrabber.captureDisplay(screen.displayID)
                 let img = try crop(shot, global: rect, screen: screen)
                 lastArea = (rect, screen.displayID)
+                await MacWallpaper.prepare(isWindow: false)
                 let item = try Output.finish(img, kind: .screenshot, pointSize: rect.size, presentQuickAccess: then == nil)
                 then?(item)
             } catch { Permissions.showError("Capture failed", error) }
@@ -123,6 +162,7 @@ enum Capture {
                     do {
                         let shot = try await ScreenGrabber.captureDisplay(r.displayID)
                         let img = try crop(shot, global: r.rect, screen: r.screen)
+                        await MacWallpaper.prepare(isWindow: false)
                         _ = try Output.finish(img, kind: .screenshot, pointSize: r.rect.size)
                     } catch { Permissions.showError("Capture failed", error) }
                 }
@@ -160,6 +200,18 @@ enum Countdown {
     }
 }
 
+/// Renders TIFF on demand from the PNG already on the clipboard.
+final class LazyTIFF: NSObject, NSPasteboardItemDataProvider {
+    static var current: LazyTIFF?
+    let png: Data
+    init(png: Data) { self.png = png }
+    func pasteboard(_ pasteboard: NSPasteboard?, item: NSPasteboardItem, provideDataForType type: NSPasteboard.PasteboardType) {
+        guard type == .tiff, let rep = NSBitmapImageRep(data: png), let tiff = rep.tiffRepresentation else { return }
+        item.setData(tiff, forType: .tiff)
+    }
+    func pasteboardFinishedWithDataProvider(_ pasteboard: NSPasteboard) { if LazyTIFF.current === self { LazyTIFF.current = nil } }
+}
+
 /// Where every still capture ends up: file, clipboard, history, sound, Quick Access.
 enum Output {
     static let sound = NSSound(contentsOfFile: "/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Screen Capture.aif", byReference: true)
@@ -175,15 +227,17 @@ enum Output {
     }
 
     static func copyToClipboard(_ img: CGImage, pointSize: CGSize) {
+        // PNG goes on the clipboard now (compact). TIFF (~20 MB for a Retina screen) is only rendered if an app
+        // actually asks for it, from the PNG — so Snapper never sits on a huge copy of every capture.
+        guard let png = encode(img, format: .png) else { return }
         let pb = NSPasteboard.general
         pb.clearContents()
-        let ns = NSImage(cgImage: img, size: pointSize)
-        if let png = encode(img, format: .png) {
-            let item = NSPasteboardItem()
-            item.setData(png, forType: .png)
-            if let tiff = ns.tiffRepresentation { item.setData(tiff, forType: .tiff) }
-            pb.writeObjects([item])
-        }
+        let item = NSPasteboardItem()
+        item.setData(png, forType: .png)
+        let provider = LazyTIFF(png: png)
+        item.setDataProvider(provider, forTypes: [.tiff])
+        LazyTIFF.current = provider
+        pb.writeObjects([item])
     }
 
     static func copyFile(_ url: URL) {
@@ -212,6 +266,7 @@ enum Output {
            let composed = withBackground(img, pointSize: pointSize, MacWallpaper.effective(p.background)) {
             img = composed.image
             pointSize = composed.pointSize
+            BackgroundImageCache.shared.purge()
         }
         let date = Date()
         if p.playSound { sound?.stop(); sound?.play() }

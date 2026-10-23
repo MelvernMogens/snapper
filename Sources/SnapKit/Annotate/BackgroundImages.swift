@@ -29,9 +29,15 @@ public final class BackgroundImageCache: @unchecked Sendable {
         f?.setValue(src.clampedToExtent(), forKey: kCIInputImageKey)
         f?.setValue(CGFloat(b) / 100 * 0.04 * CGFloat(max(base.width, base.height)), forKey: kCIInputRadiusKey)
         guard let out = f?.outputImage?.cropped(to: src.extent), let cg = ci.createCGImage(out, from: src.extent) else { return base }
-        if blurred.count > 6 { blurred.removeAll() }
+        if blurred.count >= 1 { blurred.removeAll() }
         blurred[key] = cg
         return cg
+    }
+
+    /// Release every decoded picture (called once a capture is done — they are re-read when needed).
+    public func purge() {
+        lock.lock(); defer { lock.unlock() }
+        sharp.removeAll(); blurred.removeAll()
     }
 
     /// Drop a cached picture (e.g. the file was replaced).
@@ -45,7 +51,7 @@ public final class BackgroundImageCache: @unchecked Sendable {
         if let c = sharp[path] { return c }
         if missing.contains(path) { return nil }
         guard let img = Self.decode(URL(fileURLWithPath: path), maxPixel: maxPixel) else { missing.insert(path); return nil }
-        if sharp.count > 12 { sharp.removeAll() }
+        if sharp.count >= 2 { sharp.removeAll() }
         sharp[path] = img
         return img
     }

@@ -146,7 +146,7 @@ final class QuickAccessCard: NSPanel {
     init(item: CaptureItem, owner: QuickAccess) {
         self.item = item
         self.owner = owner
-        let img = item.nsImage
+        let img = item.kind == .screenshot ? item.thumbnail() : item.nsImage
         let src = img?.size ?? item.pointSize
         var ratio = src.width > 0 ? src.height / src.width : 0.6
         ratio = min(max(ratio, 0.4), 1.2)
@@ -560,7 +560,7 @@ final class QuickAccessView: NSView, NSDraggingSource {
 
     /// Show the edited image after Annotate saved/copied.
     func refreshImage() {
-        guard let img = card.item.nsImage else { return }
+        guard let img = card.item.thumbnail() else { return }
         image = img
         thumbView?.image = img
     }
