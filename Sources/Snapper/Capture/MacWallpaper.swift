@@ -2,17 +2,15 @@ import AppKit
 import ScreenCaptureKit
 import SnapKit
 
-/// "Use Mac wallpaper": resolves the desktop picture that is showing right now.
-/// 1. The wallpaper's image file, when macOS points at a real, existing image file (sharpest).
-/// 2. Otherwise (dynamic/aerial wallpapers, or a file that was moved) a snapshot of the live wallpaper
-///    window, grabbed with ScreenCaptureKit and kept in Application Support/Snapper/Backgrounds.
+/// "Use Mac wallpaper": saves the desktop picture ONCE when you press the button in Settings
+/// (the wallpaper's own image file when it exists, else a snapshot of the live wallpaper window).
 enum MacWallpaper {
     static var snapshotURL: URL { BackgroundStore.directory.appendingPathComponent("mac-wallpaper.png") }
 
-    /// Path to use right now, or nil if neither source is available yet.
+    /// The wallpaper saved when you pressed "Use" / "Update" in Settings. Captures just read this file —
+    /// nothing is grabbed from the screen at capture time.
     static var path: String? {
-        if let u = BackgroundStore.currentDesktopPicture { return u.path }
-        return FileManager.default.fileExists(atPath: snapshotURL.path) ? snapshotURL.path : nil
+        FileManager.default.fileExists(atPath: snapshotURL.path) ? snapshotURL.path : nil
     }
 
     /// The background Settings describes, with the Mac wallpaper swapped in when that mode is on.
@@ -33,6 +31,15 @@ enum MacWallpaper {
         if let done { waiters.append(done) }
         guard !refreshing else { return }          // the running refresh will call us back
         refreshing = true
+        if let file = BackgroundStore.currentDesktopPicture, let img = BackgroundImageCache.decode(file, maxPixel: 5120),
+           let data = Output.encode(img, format: .png) {
+            try? FileManager.default.createDirectory(at: BackgroundStore.directory, withIntermediateDirectories: true)
+            try? data.write(to: snapshotURL, options: .atomic)
+            BackgroundImageCache.shared.forget(snapshotURL.path)
+            refreshing = false
+            let w = waiters; waiters.removeAll(); w.forEach { $0() }
+            return
+        }
         Task { @MainActor in
             defer {
                 refreshing = false
@@ -63,12 +70,4 @@ enum MacWallpaper {
         }
     }
 
-    /// Called by captures right before the background is applied. Snapshotting only here means the
-    /// screen-recording indicator only ever shows while you are actually capturing.
-    static func prepare(isWindow: Bool) async {
-        let p = Prefs.shared
-        guard p.followMacWallpaper, BackgroundStore.currentDesktopPicture == nil,
-              p.autoBackground == .all || (p.autoBackground == .windows && isWindow) else { return }
-        await withCheckedContinuation { k in refresh { k.resume() } }
-    }
 }

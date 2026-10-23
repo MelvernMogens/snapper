@@ -124,13 +124,13 @@ struct BackgroundSettingsView: View {
                     Image(systemName: "desktopcomputer").font(.system(size: 14)).foregroundStyle(.secondary)
                     VStack(alignment: .leading, spacing: 1) {
                         Text("Use Mac wallpaper")
-                        Text(m.followMac ? "On — follows your desktop picture, even when you change it" : "Always use whatever your desktop picture is")
+                        Text(m.followMac ? "Saved your wallpaper. Changed it? Press Update." : "Saves your current desktop picture as the background")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
                     if m.followMac {
-                        Label("In use", systemImage: "checkmark.circle.fill")
-                            .font(.caption.weight(.medium)).foregroundStyle(Color.accentColor)
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.accentColor)
+                        Button("Update") { m.useMacWallpaper() }
                     } else {
                         Button("Use") { m.useMacWallpaper() }
                     }

@@ -84,7 +84,6 @@ enum Capture {
                     do {
                         let (img, pts) = try await image(for: r, shots: shots)
                         if r.windowID == nil { lastArea = (r.rect, r.displayID) }
-                        await MacWallpaper.prepare(isWindow: r.windowID != nil)
                         let item = try Output.finish(img, kind: .screenshot, pointSize: pts, presentQuickAccess: then == nil, isWindow: r.windowID != nil)
                         then?(item)
                     } catch { Permissions.showError("Capture failed", error) }
@@ -118,7 +117,6 @@ enum Capture {
         Task { @MainActor in
             do {
                 let img = try await ScreenGrabber.captureDisplay(s.displayID)
-                await MacWallpaper.prepare(isWindow: false)
                 let item = try Output.finish(img, kind: .screenshot, pointSize: s.frame.size, presentQuickAccess: then == nil)
                 then?(item)
             } catch { Permissions.showError("Capture failed", error) }
@@ -132,7 +130,6 @@ enum Capture {
             do {
                 let shot = try await ScreenGrabber.captureDisplay(s.displayID)
                 let img = try crop(shot, global: last.rect, screen: s)
-                await MacWallpaper.prepare(isWindow: false)
                 _ = try Output.finish(img, kind: .screenshot, pointSize: last.rect.size)
             } catch { Permissions.showError("Capture failed", error) }
         }
@@ -145,7 +142,6 @@ enum Capture {
                 let shot = try await ScreenGrabber.captureDisplay(screen.displayID)
                 let img = try crop(shot, global: rect, screen: screen)
                 lastArea = (rect, screen.displayID)
-                await MacWallpaper.prepare(isWindow: false)
                 let item = try Output.finish(img, kind: .screenshot, pointSize: rect.size, presentQuickAccess: then == nil)
                 then?(item)
             } catch { Permissions.showError("Capture failed", error) }
@@ -162,7 +158,6 @@ enum Capture {
                     do {
                         let shot = try await ScreenGrabber.captureDisplay(r.displayID)
                         let img = try crop(shot, global: r.rect, screen: r.screen)
-                        await MacWallpaper.prepare(isWindow: false)
                         _ = try Output.finish(img, kind: .screenshot, pointSize: r.rect.size)
                     } catch { Permissions.showError("Capture failed", error) }
                 }
