@@ -28,6 +28,16 @@ enum CLI {
             case "--allinone":
                 AllInOne.start()
                 while true { try? await Task.sleep(for: .seconds(60)) }
+            case "--allinone-drag-wait":
+                // --allinone-drag-wait SECONDS [record]: open ⇧⌘5 (optionally record mode/Area), print the box before & after
+                AllInOne.start()
+                guard let a = AllInOne.current else { return 1 }
+                if rest.count > 1 { a.run(.video); a.setTarget(.area) }
+                out("before \(a.rect)")
+                try? await Task.sleep(for: .seconds(Double(rest[0]) ?? 5))
+                out("after \(a.rect)")
+                a.close()
+                return 0
             case "--allinone-record":
                 // --allinone-record area|window|fullscreen OUT.png [go]  : ⇧⌘5 → Record Video → target; renders the toolbar
                 AllInOne.start()

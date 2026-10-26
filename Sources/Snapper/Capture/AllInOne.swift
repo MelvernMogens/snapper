@@ -266,6 +266,9 @@ final class AllInOneWindow: NSWindow {
         backgroundColor = .clear
         hasShadow = false
         acceptsMouseMovedEvents = true
+        // The selection is drawn fully transparent; without this macOS sends clicks there to the app behind,
+        // so the box could never be grabbed and moved.
+        ignoresMouseEvents = false
         isReleasedWhenClosed = false
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
     }
@@ -350,6 +353,7 @@ final class AllInOneView: NSView {
 
     override func mouseDragged(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
+
         switch drag {
         case .none: return
         case .new(let a):
@@ -383,6 +387,9 @@ final class AllInOneView: NSView {
         ctx.setFillColor(NSColor.black.withAlphaComponent(0.4).cgColor)
         ctx.fillPath(using: .evenOdd)
         guard !r.isEmpty else { return }
+        // Invisible, but non-zero alpha so the window keeps receiving clicks inside the box.
+        ctx.setFillColor(NSColor.black.withAlphaComponent(0.004).cgColor)
+        ctx.fill(r)
 
         ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.9).cgColor)
         ctx.setLineWidth(1)
@@ -606,3 +613,4 @@ final class AllInOneToolbar: NSPanel, NSTextFieldDelegate {
         makeFirstResponder(nil)
     }
 }
+
