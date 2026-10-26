@@ -181,6 +181,12 @@ final class StreamRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
             AVVideoMaxKeyFrameIntervalKey: fps * 2,
             AVVideoAllowFrameReorderingKey: false,
         ]
+        // Constant-quality encoding: the hardware encoder badly undershoots a plain average bitrate on screen
+        // content (~2 Mbps for a Retina screen → mushy text while scrolling). Quality lets it spend bits when
+        // the picture moves, and stay small when it doesn't.
+        let qualities = [0.85, 0.95, 1.0]
+        compression[AVVideoQualityKey] = qualities[max(0, min(2, Prefs.shared.recordQuality))]
+        compression[AVVideoAverageBitRateKey] = max(8_000_000, min(px * 12, 120_000_000))
         compression[AVVideoProfileLevelKey] = hevc ? "HEVC_Main_AutoLevel" : AVVideoProfileLevelH264HighAutoLevel
         let settings: [String: Any] = [
             AVVideoCodecKey: hevc ? AVVideoCodecType.hevc : AVVideoCodecType.h264,

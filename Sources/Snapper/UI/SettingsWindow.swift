@@ -69,6 +69,7 @@ final class SettingsModel: ObservableObject {
     @Published var showCrosshair: Bool { didSet { p.showCrosshair = showCrosshair } }
     @Published var hideDesktopIcons: Bool { didSet { p.hideDesktopIcons = hideDesktopIcons } }
     @Published var recordFPS: Int { didSet { p.recordFPS = recordFPS } }
+    @Published var recordQuality: Int { didSet { p.recordQuality = recordQuality } }
     @Published var recordShowClicks: Bool { didSet { p.recordShowClicks = recordShowClicks } }
     @Published var recordAudioMic: Bool { didSet { p.recordAudioMic = recordAudioMic } }
     @Published var replaceSystemShortcuts: Bool {
@@ -105,6 +106,7 @@ final class SettingsModel: ObservableObject {
         showCrosshair = p.showCrosshair
         hideDesktopIcons = p.hideDesktopIcons
         recordFPS = p.recordFPS
+        recordQuality = p.recordQuality
         recordShowClicks = p.recordShowClicks
         recordAudioMic = p.recordAudioMic
         replaceSystemShortcuts = p.useCommandShiftKeys
@@ -291,6 +293,13 @@ struct SettingsView: View {
                 Picker("Frame rate", selection: $model.recordFPS) {
                     Text("30 fps").tag(30)
                     Text("60 fps").tag(60)
+                }
+                .pickerStyle(.segmented)
+                .fixedSize()
+                Picker("Quality", selection: $model.recordQuality) {
+                    Text("Standard").tag(0)
+                    Text("High").tag(1)
+                    Text("Maximum").tag(2)
                 }
                 .pickerStyle(.segmented)
                 .fixedSize()

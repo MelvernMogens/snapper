@@ -58,6 +58,15 @@ enum CLI {
                     out("\(w.windowID) layer=\(w.windowLayer) title=\(w.title ?? "-") app=\(w.owningApplication?.bundleIdentifier ?? "-") frame=\(w.frame) onscreen=\(w.isOnScreen)")
                 }
                 return 0
+            case "--record-test":
+                // --record-test SECONDS OUT.mp4 : records the main display (scrolling-friendly test of encoder quality)
+                let scr = NSScreen.main!
+                let r = StreamRecorder(globalRect: scr.frame, screen: scr, fps: 60, mic: false, outURL: URL(fileURLWithPath: rest[1]))
+                try await r.start()
+                try await Task.sleep(nanoseconds: UInt64((Double(rest[0]) ?? 4) * 1e9))
+                let res = try await r.stop()
+                out("ok \(res.url.path)")
+                return 0
             case "--mac-wallpaper":
                 await withCheckedContinuation { k in MacWallpaper.refresh { k.resume() } }
                 out("desktopFile=\(BackgroundStore.currentDesktopPicture?.path ?? "none") snapshot=\(FileManager.default.fileExists(atPath: MacWallpaper.snapshotURL.path)) using=\(MacWallpaper.path ?? "none")")

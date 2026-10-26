@@ -69,5 +69,7 @@ public final class Prefs {
     /// Recording: show mouse clicks as rings.
     public var recordShowClicks: Bool { get { bool("recordShowClicks", true) } set { d.set(newValue, forKey: "recordShowClicks") } }
     public var recordAudioMic: Bool { get { bool("recordAudioMic", false) } set { d.set(newValue, forKey: "recordAudioMic") } }
+    /// Video encoder quality: 0 = Standard (smaller files), 1 = High (default), 2 = Maximum.
+    public var recordQuality: Int { get { d.object(forKey: "recordQuality") == nil ? 1 : d.integer(forKey: "recordQuality") } set { d.set(newValue, forKey: "recordQuality") } }
     public var recordFPS: Int { get { d.object(forKey: "recordFPS") == nil ? 60 : d.integer(forKey: "recordFPS") } set { d.set(newValue, forKey: "recordFPS") } }
 }
