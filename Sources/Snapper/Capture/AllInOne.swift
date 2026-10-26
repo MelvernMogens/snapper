@@ -41,8 +41,17 @@ final class AllInOne {
     var rect: CGRect             // global AppKit points
     private var windows: [AllInOneWindow] = []
     private var toolbar: AllInOneToolbar?
+    var toolbarWindow: NSWindow? { toolbar }
     private var monitor: Any?
     private let previousApp = NSWorkspace.shared.frontmostApplication
+
+    // Record mode (after pressing Record Video / Record GIF): pick Area / Window / Fullscreen, then Record.
+    enum Target: Int { case area, window, fullscreen }
+    private(set) var recordMode: Mode?          // .video or .gif while choosing what to record
+    private(set) var target: Target = .area
+    private var areaRect: CGRect = .zero
+    private(set) var lockedWindow: CGWindowID?
+    private var windowList: [(id: CGWindowID, rect: CGRect, owner: String)] = []
 
     static var lastRect: CGRect? {
         get {
@@ -83,7 +92,7 @@ final class AllInOne {
         NSApp.activate(ignoringOtherApps: true)
         windows.forEach { $0.orderFrontRegardless() }
         windows.first { $0.screen == screen }?.makeKey()
-        let tb = AllInOneToolbar(owner: self)
+        let tb = AllInOneToolbar(owner: self, recording: nil)
         toolbar = tb
         tb.orderFrontRegardless()
         rectChanged()
@@ -98,8 +107,8 @@ final class AllInOne {
     private func key(_ e: NSEvent) -> Bool {
         let step: CGFloat = e.modifierFlags.contains(.shift) ? 10 : 1
         switch Int(e.keyCode) {
-        case 53: close(); return true
-        case 36, 76: run(.screenshot); return true
+        case 53: if recordMode != nil { leaveRecordMode() } else { close() }; return true
+        case 36, 76: recordMode != nil ? startRecording() : run(.screenshot); return true
         case 123: nudge(-step, 0); return true
         case 124: nudge(step, 0); return true
         case 125: nudge(0, -step); return true
@@ -109,6 +118,7 @@ final class AllInOne {
     }
 
     private func nudge(_ dx: CGFloat, _ dy: CGFloat) {
+        guard recordMode == nil || target == .area else { return }
         rect = Geo.clampMove(rect.offsetBy(dx: dx, dy: dy), into: screenFrame(for: rect))
         rectChanged()
     }
@@ -145,11 +155,91 @@ final class AllInOne {
         if AllInOne.current === self { AllInOne.current = nil }
     }
 
-    /// Hide the overlay first, then act on the selection once the dim layer is off the screen.
-    func run(_ mode: Mode) {
+    // MARK: record mode
+
+    func enterRecordMode(_ m: Mode) {
+        recordMode = m
+        areaRect = rect
+        rebuildToolbar()
+        setTarget(Target(rawValue: Prefs.shared.recordTarget) ?? .area)
+    }
+
+    func leaveRecordMode() {
+        if target != .area { rect = areaRect }
+        recordMode = nil
+        target = .area
+        lockedWindow = nil
+        rebuildToolbar()
+        rectChanged()
+    }
+
+    func setTarget(_ t: Target) {
+        if target == .area && t != .area { areaRect = rect }
+        target = t
+        Prefs.shared.recordTarget = t.rawValue
+        lockedWindow = nil
+        switch t {
+        case .area: rect = areaRect
+        case .fullscreen: rect = NSScreen.underMouse.frame
+        case .window:
+            windowList = ScreenGrabber.windowList()
+            rect = .zero
+            hoverWindow(at: NSEvent.mouseLocation)
+        }
+        toolbar?.recordTargetChanged(t)
+        rectChanged()
+    }
+
+    private func windowRect(at p: CGPoint) -> (CGWindowID, CGRect)? {
+        guard let w = windowList.first(where: { $0.rect.contains(p) }) else { return nil }
+        return (w.id, w.rect.intersection(screenFrame(for: w.rect)).integral)
+    }
+
+    /// Window target: highlight the window under the pointer until one is clicked.
+    func hoverWindow(at p: CGPoint) {
+        guard target == .window, lockedWindow == nil else { return }
+        let r = windowRect(at: p)?.1 ?? .zero
+        if r != rect { rect = r; rectChanged() }
+    }
+
+    func lockWindow(at p: CGPoint) {
+        guard target == .window, let (id, r) = windowRect(at: p) else { return }
+        lockedWindow = id
+        rect = r
+        rectChanged()
+    }
+
+    func toggleCountdown() {
+        Prefs.shared.recordCountdown.toggle()
+        toolbar?.recordTargetChanged(target)
+    }
+
+    func startRecording() {
+        guard let m = recordMode, rect.width >= 8, rect.height >= 8 else { NSSound.beep(); return }
         let r = rect.integral
         let s = selectionScreen
-        AllInOne.lastRect = r
+        if target == .area { AllInOne.lastRect = r } else { AllInOne.lastRect = areaRect }
+        close()
+        if previousApp?.processIdentifier != getpid() { previousApp?.activate() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+            Recorder.shared.record(rect: r, screen: s, gif: m == .gif)
+        }
+    }
+
+    private func rebuildToolbar() {
+        toolbar?.orderOut(nil)
+        let tb = AllInOneToolbar(owner: self, recording: recordMode)
+        toolbar = tb
+        tb.orderFrontRegardless()
+        rectChanged()
+    }
+
+    /// Hide the overlay first, then act on the selection once the dim layer is off the screen.
+    func run(_ mode: Mode) {
+        if mode == .video || mode == .gif { enterRecordMode(mode); return }
+        let r = rect.integral
+        let s = selectionScreen
+        if r.width >= 8 { AllInOne.lastRect = r }
         close()
         if previousApp?.processIdentifier != getpid() { previousApp?.activate() }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
@@ -220,7 +310,13 @@ final class AllInOneView: NSView {
         return nil
     }
 
-    override func mouseMoved(with event: NSEvent) { cursor(for: convert(event.locationInWindow, from: nil)).set() }
+    private var areaEditable: Bool { owner.recordMode == nil || owner.target == .area }
+
+    override func mouseMoved(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        if owner.recordMode != nil && owner.target == .window { owner.hoverWindow(at: global(p)); NSCursor.pointingHand.set(); return }
+        cursor(for: p).set()
+    }
     override func cursorUpdate(with event: NSEvent) { cursor(for: convert(event.locationInWindow, from: nil)).set() }
 
     private func cursor(for p: CGPoint) -> NSCursor {
@@ -235,6 +331,18 @@ final class AllInOneView: NSView {
     override func mouseDown(with event: NSEvent) {
         window?.makeKey()
         let p = convert(event.locationInWindow, from: nil)
+        if owner.recordMode != nil {
+            switch owner.target {
+            case .window:
+                owner.lockWindow(at: global(p))
+                if event.clickCount >= 2 { owner.startRecording() }
+                drag = .none; return
+            case .fullscreen:
+                // Dragging out a new rectangle switches back to Area.
+                owner.setTarget(.area); drag = .new(p); return
+            case .area: break
+            }
+        }
         if let h = handle(at: p) { drag = .resize(h, p, owner.rect) }
         else if local.contains(p) { drag = .move(p, owner.rect); NSCursor.closedHand.set() }
         else { drag = .new(p) }
@@ -282,6 +390,13 @@ final class AllInOneView: NSView {
         ctx.stroke(r.insetBy(dx: -0.5, dy: -0.5))
         ctx.setLineDash(phase: 0, lengths: [])
 
+        if owner.recordMode != nil && owner.target == .window {
+            ctx.setStrokeColor(NSColor.controlAccentColor.cgColor)
+            ctx.setLineWidth(owner.lockedWindow != nil ? 3 : 2)
+            ctx.stroke(r.insetBy(dx: 1, dy: 1))
+            return
+        }
+        guard areaEditable else { return }
         for (_, c) in handles(r) {
             let hr = CGRect(x: c.x - handleSize / 2, y: c.y - handleSize / 2, width: handleSize, height: handleSize)
             ctx.setFillColor(NSColor.white.cgColor)
@@ -298,7 +413,11 @@ final class AllInOneToolbar: NSPanel, NSTextFieldDelegate {
     private let wField = NSTextField()
     private let hField = NSTextField()
 
-    init(owner: AllInOne) {
+    private var targetButtons: [NSButton] = []
+    private var timerButton: NSButton?
+    private var sizeViews: [NSView] = []
+
+    init(owner: AllInOne, recording: AllInOne.Mode?) {
         self.owner = owner
         super.init(contentRect: CGRect(x: 0, y: 0, width: 100, height: 36), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 1)
@@ -363,10 +482,62 @@ final class AllInOneToolbar: NSPanel, NSTextFieldDelegate {
         close.contentTintColor = .secondaryLabelColor
         close.toolTip = "Cancel (Esc)"
 
-        let views: [NSView] = [btn(.screenshot), btn(.window), btn(.fullscreen), sep(),
-                               btn(.scrolling), btn(.ocr), btn(.pin), sep(),
-                               btn(.video), btn(.gif), sep(),
-                               wField, times, hField, sep(), close]
+        let views: [NSView]
+        if let recording {
+            func icon(_ name: String, _ tip: String, _ action: Selector, size: CGFloat = 13) -> NSButton {
+                let b = NSButton(image: NSImage(systemSymbolName: name, accessibilityDescription: tip)!
+                    .withSymbolConfiguration(.init(pointSize: size, weight: .regular))!, target: self, action: action)
+                b.isBordered = false
+                b.contentTintColor = .white
+                b.toolTip = tip
+                b.wantsLayer = true
+                b.layer?.cornerRadius = 5
+                b.translatesAutoresizingMaskIntoConstraints = false
+                b.widthAnchor.constraint(equalToConstant: 28).isActive = true
+                b.heightAnchor.constraint(equalToConstant: 26).isActive = true
+                return b
+            }
+            let back = icon("chevron.left", "Back (Esc)", #selector(backAction), size: 11)
+            back.contentTintColor = .secondaryLabelColor
+            let targets: [(String, String)] = [("rectangle.dashed", "Record Area"), ("macwindow", "Record Window — click a window"),
+                                               ("display", "Record Fullscreen")]
+            targetButtons = targets.enumerated().map { i, t in
+                let b = icon(t.0, t.1, #selector(targetAction(_:)))
+                b.tag = i
+                return b
+            }
+            let timer = NSButton(title: "", target: self, action: #selector(timerAction))
+            timer.isBordered = false
+            timer.image = NSImage(systemSymbolName: "timer", accessibilityDescription: "Countdown")!
+                .withSymbolConfiguration(.init(pointSize: 12, weight: .regular))
+            timer.imagePosition = .imageLeading
+            timer.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+            timer.translatesAutoresizingMaskIntoConstraints = false
+            timer.widthAnchor.constraint(equalToConstant: 46).isActive = true
+            timer.heightAnchor.constraint(equalToConstant: 26).isActive = true
+            timerButton = timer
+
+            let rec = NSButton(title: recording == .gif ? "Record GIF" : "Record", target: self, action: #selector(recordAction))
+            rec.isBordered = false
+            rec.wantsLayer = true
+            rec.layer?.backgroundColor = NSColor.systemRed.cgColor
+            rec.layer?.cornerRadius = 6
+            rec.attributedTitle = NSAttributedString(string: recording == .gif ? "Record GIF" : "Record",
+                                                     attributes: [.foregroundColor: NSColor.white, .font: NSFont.systemFont(ofSize: 11.5, weight: .semibold)])
+            rec.toolTip = "Start recording (↩)"
+            rec.translatesAutoresizingMaskIntoConstraints = false
+            rec.heightAnchor.constraint(equalToConstant: 22).isActive = true
+            rec.widthAnchor.constraint(equalToConstant: recording == .gif ? 82 : 60).isActive = true
+
+            let sizeSep = sep()
+            sizeViews = [wField, times, hField, sizeSep]
+            views = [back, sep()] + targetButtons + [sep(), wField, times, hField, sizeSep, timer, rec, sep(), close]
+        } else {
+            views = [btn(.screenshot), btn(.window), btn(.fullscreen), sep(),
+                     btn(.scrolling), btn(.ocr), btn(.pin), sep(),
+                     btn(.video), btn(.gif), sep(),
+                     wField, times, hField, sep(), close]
+        }
         let stack = NSStackView(views: views)
         stack.spacing = 3
         stack.edgeInsets = NSEdgeInsets(top: 4, left: 8, bottom: 4, right: 8)
@@ -407,6 +578,29 @@ final class AllInOneToolbar: NSPanel, NSTextFieldDelegate {
         owner.run(m)
     }
     @objc private func closeAction() { owner.close() }
+    @objc private func backAction() { owner.leaveRecordMode() }
+    @objc private func targetAction(_ sender: NSButton) { owner.setTarget(AllInOne.Target(rawValue: sender.tag) ?? .area) }
+    @objc private func timerAction() { owner.toggleCountdown() }
+    @objc private func recordAction() { owner.startRecording() }
+
+    /// Highlight the chosen target, show W×H only for Area, and the countdown state.
+    func recordTargetChanged(_ t: AllInOne.Target) {
+        for b in targetButtons {
+            let on = b.tag == t.rawValue
+            b.layer?.backgroundColor = on ? NSColor.white.withAlphaComponent(0.2).cgColor : NSColor.clear.cgColor
+            b.contentTintColor = on ? .white : NSColor.white.withAlphaComponent(0.6)
+        }
+        sizeViews.forEach { $0.isHidden = t != .area }
+        if let timer = timerButton {
+            let on = Prefs.shared.recordCountdown
+            timer.attributedTitle = NSAttributedString(string: on ? "3s" : "Off", attributes: [
+                .foregroundColor: on ? NSColor.white : NSColor.white.withAlphaComponent(0.45),
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)])
+            timer.contentTintColor = on ? .white : NSColor.white.withAlphaComponent(0.45)
+            timer.toolTip = on ? "Countdown 3-2-1 is on — click to start recording instantly" : "No countdown — click to turn the 3-2-1 back on"
+        }
+        if let stack = contentView?.subviews.first { setContentSize(stack.fittingSize) }
+    }
     @objc private func sizeEdited() {
         owner.setSize(width: Double(wField.stringValue).map { CGFloat($0) }, height: Double(hField.stringValue).map { CGFloat($0) })
         makeFirstResponder(nil)

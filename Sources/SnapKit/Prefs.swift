@@ -69,6 +69,10 @@ public final class Prefs {
     /// Recording: show mouse clicks as rings.
     public var recordShowClicks: Bool { get { bool("recordShowClicks", true) } set { d.set(newValue, forKey: "recordShowClicks") } }
     public var recordAudioMic: Bool { get { bool("recordAudioMic", false) } set { d.set(newValue, forKey: "recordAudioMic") } }
+    /// Show the 3-2-1 countdown before a recording starts.
+    public var recordCountdown: Bool { get { bool("recordCountdown", true) } set { d.set(newValue, forKey: "recordCountdown") } }
+    /// Last record target picked in ⇧⌘5: 0 area, 1 window, 2 fullscreen.
+    public var recordTarget: Int { get { d.integer(forKey: "recordTarget") } set { d.set(newValue, forKey: "recordTarget") } }
     /// Video encoder quality: 0 = Standard (smaller files), 1 = High (default), 2 = Maximum.
     public var recordQuality: Int { get { d.object(forKey: "recordQuality") == nil ? 1 : d.integer(forKey: "recordQuality") } set { d.set(newValue, forKey: "recordQuality") } }
     public var recordFPS: Int { get { d.object(forKey: "recordFPS") == nil ? 60 : d.integer(forKey: "recordFPS") } set { d.set(newValue, forKey: "recordFPS") } }

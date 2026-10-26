@@ -70,6 +70,7 @@ final class SettingsModel: ObservableObject {
     @Published var hideDesktopIcons: Bool { didSet { p.hideDesktopIcons = hideDesktopIcons } }
     @Published var recordFPS: Int { didSet { p.recordFPS = recordFPS } }
     @Published var recordQuality: Int { didSet { p.recordQuality = recordQuality } }
+    @Published var recordCountdown: Bool { didSet { p.recordCountdown = recordCountdown } }
     @Published var recordShowClicks: Bool { didSet { p.recordShowClicks = recordShowClicks } }
     @Published var recordAudioMic: Bool { didSet { p.recordAudioMic = recordAudioMic } }
     @Published var replaceSystemShortcuts: Bool {
@@ -107,6 +108,7 @@ final class SettingsModel: ObservableObject {
         hideDesktopIcons = p.hideDesktopIcons
         recordFPS = p.recordFPS
         recordQuality = p.recordQuality
+        recordCountdown = p.recordCountdown
         recordShowClicks = p.recordShowClicks
         recordAudioMic = p.recordAudioMic
         replaceSystemShortcuts = p.useCommandShiftKeys
@@ -303,6 +305,7 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.segmented)
                 .fixedSize()
+                Toggle("3-2-1 countdown before recording", isOn: $model.recordCountdown)
                 Toggle("Highlight mouse clicks", isOn: $model.recordShowClicks)
                 Toggle("Record microphone audio", isOn: $model.recordAudioMic)
             }

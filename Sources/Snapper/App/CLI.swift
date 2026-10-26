@@ -28,6 +28,27 @@ enum CLI {
             case "--allinone":
                 AllInOne.start()
                 while true { try? await Task.sleep(for: .seconds(60)) }
+            case "--allinone-record":
+                // --allinone-record area|window|fullscreen OUT.png [go]  : ⇧⌘5 → Record Video → target; renders the toolbar
+                AllInOne.start()
+                guard let a = AllInOne.current else { err("no allinone"); return 1 }
+                a.run(.video)
+                a.setTarget(["area": .area, "window": .window, "fullscreen": .fullscreen][rest[0]] ?? .area)
+                if rest[0] == "window" { a.lockWindow(at: NSEvent.mouseLocation) }
+                try? await Task.sleep(for: .milliseconds(600))
+                if let tb = a.toolbarWindow, let v = tb.contentView, let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) {
+                    v.cacheDisplay(in: v.bounds, to: rep)
+                    try rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: rest[1]))
+                    out("toolbar=\(tb.frame) rect=\(a.rect) target=\(a.target) countdown=\(Prefs.shared.recordCountdown)")
+                }
+                if rest.count > 2 && rest[2] == "go" {
+                    a.startRecording()
+                    try? await Task.sleep(for: .seconds(3))
+                    Recorder.shared.stop()
+                    try? await Task.sleep(for: .seconds(3))
+                    out("recorded")
+                } else { a.close() }
+                return 0
             case "--shortcuts":
                 out("useCommandShiftKeys=\(Prefs.shared.useCommandShiftKeys) macOSKeysEnabled=\(SystemShortcuts.macOSScreenshotKeysEnabled())")
                 for b in HotKeyCenter.shared.bindings { out("\(b.action.rawValue) \(b.char) mods=\(b.carbonMods)") }

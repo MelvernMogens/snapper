@@ -67,7 +67,7 @@ final class Recorder: NSObject {
         self.screen = screen
         paused = false
         phase = .countdown
-        countdownLeft = 3
+        countdownLeft = Prefs.shared.recordCountdown ? 3 : 0
 
         border = RecordBorder(rect: plan.globalRect)
         border?.show()
